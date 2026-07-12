@@ -8,6 +8,7 @@ import warnings
 import numpy as np
 import torch
 
+from src.models.onnx_track_backend import ONNXTrackBackend
 from src.models.tensorrt_track_backend import TensorRTTrackBackend
 from src.models.tracknet_v3 import TrackNetV3
 from src.postprocess.track import (
@@ -38,6 +39,11 @@ class TrackBranch:
             self._use_amp = False
             self._use_channels_last = False
             self.model = TensorRTTrackBackend(str(self.model_weight), self.device)
+            return
+        if self.backend_name == "onnx":
+            self._use_amp = False
+            self._use_channels_last = False
+            self.model = ONNXTrackBackend(str(self.model_weight), self.device)
             return
 
         self._use_amp = "cuda" in self.device
@@ -76,6 +82,8 @@ class TrackBranch:
         suffix = Path(self.model_weight).suffix.lower() if self.model_weight else ""
         if suffix == ".engine":
             return "tensorrt"
+        if suffix == ".onnx":
+            return "onnx"
         return "pytorch"
 
     def _prepare_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -93,6 +101,11 @@ class TrackBranch:
                 heatmaps = self.model.infer(tensor)
             decoded = decode_track_heatmap(heatmaps, meta, self.score_thr)
             return heatmaps, decoded
+        if self.backend_name == "onnx":
+            tensor, meta = preprocess_track_window(frames, self.input_size, "cpu")
+            heatmaps = self.model.infer(tensor)
+            decoded = decode_track_heatmap(heatmaps, meta, self.score_thr)
+            return heatmaps, decoded
 
         tensor, meta = preprocess_track_window(frames, self.input_size, self.device)
         tensor = self._prepare_tensor(tensor)
@@ -107,6 +120,10 @@ class TrackBranch:
                 tensor, meta = preprocess_track_window(frames, self.input_size, self.device)
                 heatmap = self.predict_heatmap_planes(tensor).squeeze(0)
             return decode_track_heatmap(heatmap, meta, self.score_thr)
+        if self.backend_name == "onnx":
+            tensor, meta = preprocess_track_window(frames, self.input_size, "cpu")
+            heatmap = self.predict_heatmap_planes(tensor).squeeze(0)
+            return decode_track_heatmap(heatmap, meta, self.score_thr)
 
         tensor, meta = preprocess_track_window(frames, self.input_size, self.device)
         heatmap = self.predict_heatmap_planes(tensor).squeeze(0)
@@ -118,6 +135,16 @@ class TrackBranch:
             with self.model.stream_context():
                 tensor, meta = preprocess_track_window(frames, self.input_size, self.device)
                 heatmap = self.predict_heatmap_planes(tensor).squeeze(0)
+            return decode_track_heatmap_candidates(
+                heatmap,
+                meta,
+                self.score_thr,
+                max_candidates=self.max_candidates,
+                candidate_score_thr=self._candidate_score_thr(),
+            )
+        if self.backend_name == "onnx":
+            tensor, meta = preprocess_track_window(frames, self.input_size, "cpu")
+            heatmap = self.predict_heatmap_planes(tensor).squeeze(0)
             return decode_track_heatmap_candidates(
                 heatmap,
                 meta,
@@ -144,6 +171,11 @@ class TrackBranch:
                 heatmaps = self._infer_tensorrt_batch(tensor)
             decoded_batch = decode_track_heatmap_batch(heatmaps, metas, self.score_thr)
             return heatmaps, decoded_batch
+        if self.backend_name == "onnx":
+            tensor, metas = preprocess_track_batch(batch_frames, self.input_size, "cpu")
+            heatmaps = self.model.infer(tensor)
+            decoded_batch = decode_track_heatmap_batch(heatmaps, metas, self.score_thr)
+            return heatmaps, decoded_batch
 
         tensor, metas = preprocess_track_batch(batch_frames, self.input_size, self.device)
         tensor = self._prepare_tensor(tensor)
@@ -158,6 +190,10 @@ class TrackBranch:
                 tensor, metas = preprocess_track_batch(batch_frames, self.input_size, self.device)
                 heatmaps = self.predict_heatmap_planes(tensor)
             return decode_track_heatmap_batch(heatmaps, metas, self.score_thr)
+        if self.backend_name == "onnx":
+            tensor, metas = preprocess_track_batch(batch_frames, self.input_size, "cpu")
+            heatmaps = self.predict_heatmap_planes(tensor)
+            return decode_track_heatmap_batch(heatmaps, metas, self.score_thr)
 
         tensor, metas = preprocess_track_batch(batch_frames, self.input_size, self.device)
         heatmaps = self.predict_heatmap_planes(tensor)
@@ -169,6 +205,16 @@ class TrackBranch:
             with self.model.stream_context():
                 tensor, metas = preprocess_track_batch(batch_frames, self.input_size, self.device)
                 heatmaps = self.predict_heatmap_planes(tensor)
+            return decode_track_heatmap_candidate_batch(
+                heatmaps,
+                metas,
+                self.score_thr,
+                max_candidates=self.max_candidates,
+                candidate_score_thr=self._candidate_score_thr(),
+            )
+        if self.backend_name == "onnx":
+            tensor, metas = preprocess_track_batch(batch_frames, self.input_size, "cpu")
+            heatmaps = self.predict_heatmap_planes(tensor)
             return decode_track_heatmap_candidate_batch(
                 heatmaps,
                 metas,
@@ -196,6 +242,13 @@ class TrackBranch:
             if heatmaps.ndim == 3:
                 return heatmaps
             raise ValueError(f"Unexpected TensorRT heatmap shape: {heatmaps.shape}")
+        if self.backend_name == "onnx":
+            heatmaps = self.model.infer(tensor)
+            if heatmaps.ndim == 4:
+                return heatmaps[:, 1]
+            if heatmaps.ndim == 3:
+                return heatmaps
+            raise ValueError(f"Unexpected ONNX heatmap shape: {heatmaps.shape}")
 
         tensor = self._prepare_tensor(tensor)
         return self.model(tensor)[:, 1].float().detach().cpu().numpy()

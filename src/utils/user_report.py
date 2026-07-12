@@ -213,7 +213,9 @@ def build_user_report_data_from_rally_record(
     zones = _zone_counts(user.get("zone_hits"))
     dimensions = _dimension_scores(summary, user, reliability, strokes, zones)
     overall_score = round(sum(item["score"] * item["weight"] for item in dimensions) / sum(item["weight"] for item in dimensions))
-    improvements = _build_improvements(dimensions, summary, user, reliability, zones, strokes)
+    action_analysis = _build_action_analysis(summary, details, user_key, strokes, zones, reliability)
+    improvements = _build_improvements(dimensions, summary, user, reliability, zones, strokes, action_analysis)
+    training_plan = _training_plan(improvements, action_analysis)
 
     return {
         "meta": {
@@ -246,8 +248,9 @@ def build_user_report_data_from_rally_record(
         "zone_distribution": [{"key": key, "label": ZONE_LABELS[key], "value": zones[key]} for key in ("front", "mid", "back")],
         "court_heat": _court_heat_points(zones, user_key),
         "reliability": _reliability_items(reliability),
+        "action_analysis": action_analysis,
         "improvements": improvements,
-        "training_plan": _training_plan(improvements),
+        "training_plan": training_plan,
         "events": _hit_events(details.get("hits"), user_key),
         "disclaimer": "本报告基于视频中的轨迹、姿态和球场投影自动估计，适合训练复盘，不作为比赛裁判或等级认证依据。",
     }
@@ -1303,6 +1306,137 @@ def _render_events_table(events: Sequence[Any]) -> str:
     )
 
 
+def _build_action_analysis(
+    summary: Mapping[str, Any],
+    details: Mapping[str, Any],
+    user_key: str,
+    strokes: Sequence[Mapping[str, Any]],
+    zones: Mapping[str, int],
+    reliability: Mapping[str, Any],
+) -> dict[str, Any]:
+    raw_hits = _as_sequence(details.get("hits"))
+    user_hits = [
+        _as_mapping(hit)
+        for hit in raw_hits
+        if str(_as_mapping(hit).get("player", "")) in ("", user_key)
+    ]
+    bst_hits = [
+        hit
+        for hit in raw_hits
+        if str(_as_mapping(hit).get("source", "")).lower() == "bst"
+        or str(_as_mapping(hit).get("stroke", "")).strip()
+    ]
+    hit_count = int(_num(summary.get("rally_hit_count")) or len(raw_hits))
+    stroke_total = sum(int(_num(item.get("value"))) for item in strokes)
+    zone_total = sum(zones.values())
+    confidences = [
+        _num(_as_mapping(hit).get("confidence"))
+        for hit in user_hits
+        if _num(_as_mapping(hit).get("confidence")) > 0
+    ]
+    avg_confidence = sum(confidences) / len(confidences) if confidences else _num(summary.get("hit_confidence_avg"))
+    top_stroke = max(strokes, key=lambda item: _num(item.get("value")), default={})
+    top_stroke_name = str(top_stroke.get("name") or "")
+    top_stroke_count = int(_num(top_stroke.get("value")))
+    top_stroke_ratio = top_stroke_count / max(1, stroke_total)
+    front_ratio = zones["front"] / max(1, zone_total)
+    mid_ratio = zones["mid"] / max(1, zone_total)
+    back_ratio = zones["back"] / max(1, zone_total)
+    passive_hits = int(_num(_as_mapping(_as_mapping(summary.get("players")).get(user_key)).get("passive_hit_count")))
+    passive_ratio = passive_hits / max(1, hit_count)
+    reliability_avg = sum(_num(reliability.get(key)) for key in RELIABILITY_LABELS) / 4.0
+
+    if hit_count <= 0:
+        return {
+            "sample_count": 0,
+            "bst_hit_count": len(bst_hits),
+            "avg_confidence": avg_confidence,
+            "overview": "本次视频没有形成足够的击球事件，报告不会推断动作优劣。",
+            "advantage": "暂无足够动作样本。",
+            "risk": "请先完成一段包含连续击球的视频分析。",
+            "training_focus": "补充 30 秒以上、球场完整入镜的连续回合后再生成动作报告。",
+            "recommendations": [],
+            "evidence": [],
+        }
+
+    evidence = [
+        f"有效击球 {hit_count} 次",
+        f"BST/动作样本 {len(bst_hits)} 次",
+        f"平均动作置信度 {avg_confidence * 100:.1f}%",
+    ]
+    if top_stroke_name:
+        evidence.append(f"最高频动作：{top_stroke_name} {top_stroke_count} 次，占 {top_stroke_ratio * 100:.1f}%")
+    if zone_total > 0:
+        evidence.append(
+            f"区域分布：前场 {front_ratio * 100:.1f}% / 中场 {mid_ratio * 100:.1f}% / 后场 {back_ratio * 100:.1f}%"
+        )
+
+    if stroke_total <= 0 or len(bst_hits) < 3:
+        overview = "动作模型样本偏少，本报告只给出保守判断，不扩展推断具体技术短板。"
+        advantage = "已完成球轨迹和部分击球事件识别，但动作类别覆盖不足。"
+        risk = "动作样本不足，杀球、吊球、高远球等细分动作比例不能作为稳定结论。"
+        training_focus = "建议补充更长回合或开启骨骼/BST 识别后再复测动作类型。"
+    else:
+        overview = (
+            f"本次动作分析基于 {hit_count} 次击球和 {stroke_total} 次动作计数；"
+            f"{top_stroke_name or '主要动作'}占比 {top_stroke_ratio * 100:.1f}%，"
+            f"平均置信度 {avg_confidence * 100:.1f}%。"
+        )
+        if top_stroke_ratio >= 0.45:
+            advantage = f"{top_stroke_name}使用频率最高，说明本次回合中该技术动作输出较稳定。"
+        elif len(strokes) >= 4:
+            advantage = f"识别到 {len(strokes)} 类击球动作，动作组合相对丰富。"
+        else:
+            advantage = "动作类型较集中，基础击球稳定性比变化性更突出。"
+
+        risks = []
+        if passive_ratio >= 0.25:
+            risks.append(f"被动击球占比 {passive_ratio * 100:.1f}%")
+        if front_ratio < 0.18 and zone_total > 0:
+            risks.append(f"前场参与率仅 {front_ratio * 100:.1f}%")
+        if top_stroke_ratio >= 0.55:
+            risks.append(f"{top_stroke_name}占比偏高，线路和节奏容易被预判")
+        if avg_confidence < 0.65:
+            risks.append("动作置信度偏低，需要复核拍摄角度和样本稳定性")
+        risk = "；".join(risks) if risks else "未发现单项动作明显异常，后续重点看连续多拍中的衔接质量。"
+
+        if front_ratio < 0.18 and zone_total > 0:
+            training_focus = "优先增加网前搓放、扑推和上网衔接训练。"
+        elif passive_ratio >= 0.25:
+            training_focus = "优先练后场回位后的第一步启动和被动球过渡。"
+        elif top_stroke_ratio >= 0.55:
+            training_focus = f"围绕{top_stroke_name}加入落点变化和下一拍衔接，不要只重复单一动作。"
+        else:
+            training_focus = "保持现有动作组合，下一阶段增加落点变化和节奏变化。"
+
+    recommendations = []
+    if reliability_avg < 0.75:
+        recommendations.append("数据可信度偏低，先固定机位、保证球场线完整，再比较动作指标。")
+    if front_ratio < 0.18 and zone_total > 0:
+        recommendations.append("每组加入 10 次搓放跟进和 6 次扑推，观察前场击球占比是否上升。")
+    if passive_ratio >= 0.25:
+        recommendations.append("做后场两点回位，记录被动击球占比是否下降。")
+    if top_stroke_ratio >= 0.55 and top_stroke_name:
+        recommendations.append(f"以{top_stroke_name}为起点，加入直线、斜线、追身三种落点变化。")
+
+    return {
+        "sample_count": hit_count,
+        "bst_hit_count": len(bst_hits),
+        "avg_confidence": avg_confidence,
+        "top_stroke": top_stroke_name,
+        "top_stroke_count": top_stroke_count,
+        "top_stroke_ratio": top_stroke_ratio,
+        "zone_ratios": {"front": front_ratio, "mid": mid_ratio, "back": back_ratio},
+        "passive_ratio": passive_ratio,
+        "overview": overview,
+        "advantage": advantage,
+        "risk": risk,
+        "training_focus": training_focus,
+        "recommendations": recommendations,
+        "evidence": evidence,
+    }
+
+
 def _dimension_scores(
     summary: Mapping[str, Any],
     user: Mapping[str, Any],
@@ -1378,6 +1512,7 @@ def _build_improvements(
     reliability: Mapping[str, Any],
     zones: Mapping[str, int],
     strokes: Sequence[Mapping[str, Any]],
+    action_analysis: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     scores = {str(item.get("name")): _num(item.get("score")) for item in dimensions}
     hit_total = max(1, int(_num(user.get("hit_count")) or _num(summary.get("rally_hit_count")) or sum(zones.values())))
@@ -1386,6 +1521,30 @@ def _build_improvements(
     back_ratio = zones["back"] / max(1, sum(zones.values()))
     smash_count = int(next((_num(item.get("value")) for item in strokes if "杀" in str(item.get("name"))), 0))
     improvements = []
+    sample_count = int(_num(action_analysis.get("sample_count")))
+    bst_hit_count = int(_num(action_analysis.get("bst_hit_count")))
+
+    if sample_count <= 0:
+        return [
+            {
+                "priority": "数据不足",
+                "title": "本次视频缺少有效击球样本",
+                "evidence": "系统没有形成足够的击球事件，因此不对具体动作优劣做判断。",
+                "suggestion": "请使用包含连续多拍、球场完整入镜的视频重新分析，再生成动作报告。",
+                "tags": ["样本不足", "重新分析"],
+            }
+        ]
+
+    if bst_hit_count < 3:
+        improvements.append(
+            {
+                "priority": "数据提示",
+                "title": "动作模型样本偏少",
+                "evidence": f"本次有效击球 {sample_count} 次，但 BST/动作样本只有 {bst_hit_count} 次，动作类别分布不宜过度解读。",
+                "suggestion": "建议使用更长回合、保证人体和球拍动作完整入镜，再比较杀球、吊球、高远球等比例。",
+                "tags": ["BST", "动作样本", "可信度"],
+            }
+        )
 
     if scores.get("攻防转换", 100) < 76 or passive_hits / hit_total > 0.24:
         improvements.append(
@@ -1431,32 +1590,40 @@ def _build_improvements(
             }
         )
 
-    fallback = [
-        {
-            "priority": "巩固项",
-            "title": "提升击球前准备节奏",
-            "evidence": "平均击球间隔和启动次数显示，本次回合节奏已经较紧，下一阶段应减少多余小碎步。",
-            "suggestion": "每拍结束后用一次分腿垫步统一启动时机，训练中以“击球后回位、对手击球时分腿”为口令。",
-            "tags": ["节奏", "分腿垫步", "准备动作"],
-        },
-        {
-            "priority": "巩固项",
-            "title": "保持动作类型多样性",
-            "evidence": "本次识别到多种击球类型，具备基本变化能力。",
-            "suggestion": "继续保持高远、吊、杀、搓的组合，不要在连续得分或丢分后只依赖单一线路。",
-            "tags": ["战术", "多拍", "变化"],
-        },
-    ]
-    for item in fallback:
-        if len(improvements) >= 3:
-            break
-        improvements.append(item)
+    if not improvements:
+        improvements.append(
+            {
+                "priority": "保持项",
+                "title": "本次动作数据未暴露明显单项短板",
+                "evidence": str(action_analysis.get("overview") or "当前动作分布和区域分布没有触发高风险规则。"),
+                "suggestion": str(action_analysis.get("training_focus") or "保持同一机位复测，用下一次报告比较动作比例变化。"),
+                "tags": ["复测", "动作分布", "趋势比较"],
+            }
+        )
     return improvements[:4]
 
 
-def _training_plan(improvements: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
+def _training_plan(improvements: Sequence[Mapping[str, Any]], action_analysis: Mapping[str, Any]) -> list[dict[str, str]]:
     titles = [str(item.get("title", "")) for item in improvements]
     plan = []
+    if int(_num(action_analysis.get("sample_count"))) <= 0:
+        return [
+            {
+                "title": "补充可分析样本",
+                "content": "拍摄 30 秒以上连续回合，固定机位并保证球场四角、击球者上半身和球路完整入镜。",
+                "frequency": "先完成 1 段",
+                "target": "形成有效击球事件",
+            }
+        ]
+    if int(_num(action_analysis.get("bst_hit_count"))) < 3:
+        plan.append(
+            {
+                "title": "动作识别样本复测",
+                "content": "使用更清晰机位重新分析，让 BST 动作样本至少达到 3 次以上，再比较动作类型比例。",
+                "frequency": "复测 1 段",
+                "target": "动作样本 ≥ 3",
+            }
+        )
     if any("后场" in title or "回位" in title for title in titles):
         plan.append(
             {
@@ -1475,14 +1642,16 @@ def _training_plan(improvements: Sequence[Mapping[str, Any]]) -> list[dict[str, 
                 "target": "前场击球占比提升到 25%",
             }
         )
-    plan.append(
-        {
-            "title": "杀吊结合线路",
-            "content": "同一后场点位按“高远、吊、点杀、重杀”循环，要求落点覆盖直线、斜线和追身。",
-            "frequency": "每次 15 分钟",
-            "target": "后场进攻得分质量提升",
-        }
-    )
+    top_stroke = str(action_analysis.get("top_stroke") or "")
+    if top_stroke and _num(action_analysis.get("top_stroke_ratio")) >= 0.45:
+        plan.append(
+            {
+                "title": f"{top_stroke}落点变化",
+                "content": f"围绕本次最高频动作“{top_stroke}”，练直线、斜线、追身三种落点，避免动作单一。",
+                "frequency": "每次 12 分钟",
+                "target": "最高频动作占比下降或得分质量提升",
+            }
+        )
     plan.append(
         {
             "title": "固定机位复测",

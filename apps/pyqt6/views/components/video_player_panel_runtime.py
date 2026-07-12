@@ -4,8 +4,8 @@ from __future__ import annotations
 from math import isfinite
 from typing import Any
 
-from PyQt6.QtCore import QEvent, QPointF, QRect, QSize, Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF
+from PyQt6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, pyqtSignal, QTimer
+from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -227,6 +227,171 @@ class CourtLineOverlayWidget(QWidget):
             painter.drawEllipse(center, radius, radius)
 
 
+class HawkeyeChallengeOverlayWidget(QWidget):
+    """Animated challenge overlay shown on top of the current video frame."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAutoFillBackground(False)
+        self.hide()
+
+        self._source_size = QSize()
+        self._display_rect = QRect()
+        self._payload: dict[str, Any] | None = None
+        self._progress = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+
+    def set_video_geometry(self, source_size: QSize, display_rect: QRect) -> None:
+        self._source_size = QSize(source_size)
+        self._display_rect = QRect(display_rect)
+        self.update()
+
+    def play(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        self._payload = payload
+        self._progress = 0.0
+        self.show()
+        self.raise_()
+        self._timer.start()
+        self.update()
+
+    def clear(self) -> None:
+        self._timer.stop()
+        self._payload = None
+        self._progress = 0.0
+        self.hide()
+        self.update()
+
+    def _tick(self) -> None:
+        self._progress += 0.018
+        if self._progress >= 1.0:
+            self._progress = 1.0
+            self._timer.stop()
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        del event
+        payload = self._payload
+        if not isinstance(payload, dict) or self._display_rect.width() <= 0 or self._display_rect.height() <= 0:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.fillRect(self.rect(), QColor(2, 8, 23, 118))
+        self._draw_title(painter)
+        self._draw_trajectory(painter, payload)
+        self._draw_verdict(painter, payload)
+        painter.end()
+
+    def _draw_title(self, painter: QPainter) -> None:
+        title_rect = QRectF(self._display_rect.left() + 24, self._display_rect.top() + 20, 360, 42)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(15, 23, 42, 210))
+        painter.drawRoundedRect(title_rect, 18, 18)
+        painter.setPen(QColor(125, 211, 252))
+        painter.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
+        painter.drawText(title_rect.adjusted(18, 0, -12, 0), Qt.AlignmentFlag.AlignVCenter, "HAWK-EYE CHALLENGE")
+
+    def _draw_trajectory(self, painter: QPainter, payload: dict[str, Any]) -> None:
+        points = self._label_points(payload.get("trajectory_points"))
+        landing = self._landing_label_point(payload)
+        if landing is not None and (not points or self._distance(points[-1], landing) > 2.0):
+            points.append(landing)
+        if len(points) >= 2:
+            visible_count = max(2, min(len(points), int(round(2 + (len(points) - 1) * min(self._progress / 0.72, 1.0)))))
+            active_points = points[:visible_count]
+            path = QPainterPath(active_points[0])
+            for point in active_points[1:]:
+                path.lineTo(point)
+            for width, alpha, color in (
+                (12.0, 70, QColor(34, 211, 238)),
+                (6.0, 160, QColor(56, 189, 248)),
+                (2.5, 255, QColor(240, 249, 255)),
+            ):
+                pen = QPen(QColor(color.red(), color.green(), color.blue(), alpha), width)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(pen)
+                painter.drawPath(path)
+        if landing is not None and self._progress > 0.58:
+            pulse = min(1.0, (self._progress - 0.58) / 0.28)
+            radius = 12.0 + 34.0 * pulse
+            painter.setPen(QPen(QColor(250, 204, 21, int(220 * (1.0 - pulse))), 4.0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(landing, radius, radius)
+            painter.setPen(QPen(QColor(255, 255, 255), 3.0))
+            painter.setBrush(QColor(250, 204, 21, 230))
+            painter.drawEllipse(landing, 8.0, 8.0)
+
+    def _draw_verdict(self, painter: QPainter, payload: dict[str, Any]) -> None:
+        if self._progress < 0.72:
+            return
+        hawkeye = payload.get("hawkeye")
+        if not isinstance(hawkeye, dict):
+            hawkeye = {}
+        call = str(hawkeye.get("call", "unknown")).upper()
+        out_by = float(hawkeye.get("out_by_cm", 0.0) or 0.0)
+        boundary = str(hawkeye.get("nearest_boundary", "unknown"))
+        mode_label = "单打边界" if str(hawkeye.get("court_mode", "")) == "singles" else "双打边界"
+        color = QColor(34, 197, 94) if call == "IN" else QColor(239, 68, 68) if call == "OUT" else QColor(148, 163, 184)
+        rect = QRectF(self._display_rect.center().x() - 155, self._display_rect.bottom() - 138, 310, 96)
+        painter.setPen(QPen(color, 2.0))
+        painter.setBrush(QColor(15, 23, 42, 230))
+        painter.drawRoundedRect(rect, 20, 20)
+        painter.setPen(color)
+        painter.setFont(QFont("Segoe UI", 30, QFont.Weight.Bold))
+        painter.drawText(rect.adjusted(0, 8, 0, -42), Qt.AlignmentFlag.AlignCenter, call)
+        detail_core = "落点在线内" if call == "IN" else f"{boundary} 出界 {out_by:.1f}cm" if call == "OUT" else "落点投影不足，无法裁决"
+        detail = f"{mode_label} · {detail_core}"
+        painter.setPen(QColor(226, 232, 240))
+        painter.setFont(QFont("Microsoft YaHei", 10, QFont.Weight.Medium))
+        painter.drawText(rect.adjusted(12, 58, -12, -8), Qt.AlignmentFlag.AlignCenter, detail)
+
+    def _label_points(self, points: object) -> list[QPointF]:
+        result: list[QPointF] = []
+        if not isinstance(points, (list, tuple)):
+            return result
+        for point in points:
+            if not isinstance(point, (list, tuple)) or len(point) < 2:
+                continue
+            mapped = self._map_image_point(point[0], point[1])
+            if mapped is not None:
+                result.append(mapped)
+        return result
+
+    def _landing_label_point(self, payload: dict[str, Any]) -> QPointF | None:
+        event = payload.get("event")
+        if not isinstance(event, dict):
+            return None
+        ball_xy = event.get("ball_xy")
+        if not isinstance(ball_xy, (list, tuple)) or len(ball_xy) < 2:
+            return None
+        return self._map_image_point(ball_xy[0], ball_xy[1])
+
+    def _map_image_point(self, x_obj: object, y_obj: object) -> QPointF | None:
+        if self._source_size.width() <= 0 or self._source_size.height() <= 0:
+            return None
+        try:
+            x = float(x_obj)
+            y = float(y_obj)
+        except (TypeError, ValueError):
+            return None
+        if not isfinite(x) or not isfinite(y) or x < 0.0 or y < 0.0:
+            return None
+        scale_x = self._display_rect.width() / max(1, self._source_size.width())
+        scale_y = self._display_rect.height() / max(1, self._source_size.height())
+        return QPointF(self._display_rect.left() + x * scale_x, self._display_rect.top() + y * scale_y)
+
+    def _distance(self, a: QPointF, b: QPointF) -> float:
+        dx = a.x() - b.x()
+        dy = a.y() - b.y()
+        return (dx * dx + dy * dy) ** 0.5
+
+
 class VideoPlayerWidget(QFrame):
     """由外部帧驱动的纯显示视频预览组件。"""
 
@@ -318,6 +483,9 @@ class VideoPlayerWidget(QFrame):
         self.court_overlay = CourtLineOverlayWidget(self.video_label)
         self.court_overlay.setGeometry(self.video_label.rect())
         self.court_overlay.raise_()
+        self.hawkeye_overlay = HawkeyeChallengeOverlayWidget(self.video_label)
+        self.hawkeye_overlay.setGeometry(self.video_label.rect())
+        self.hawkeye_overlay.raise_()
 
         self.preview_stack.addWidget(placeholder_page)
         self.preview_stack.addWidget(self.video_label)
@@ -383,6 +551,8 @@ class VideoPlayerWidget(QFrame):
         if self._current_pixmap is None:
             self.court_overlay.setGeometry(self.video_label.rect())
             self.court_overlay.set_video_geometry(QSize(), QRect())
+            self.hawkeye_overlay.setGeometry(self.video_label.rect())
+            self.hawkeye_overlay.set_video_geometry(QSize(), QRect())
             return
         label_size = self.video_label.size()
         if label_size.width() <= 0 or label_size.height() <= 0:
@@ -409,6 +579,7 @@ class VideoPlayerWidget(QFrame):
             self._scaled_label_size = QSize(label_size)
         self.video_label.setPixmap(scaled)
         self.court_overlay.setGeometry(self.video_label.rect())
+        self.hawkeye_overlay.setGeometry(self.video_label.rect())
         display_rect = QRect(
             (self.video_label.width() - scaled.width()) // 2,
             (self.video_label.height() - scaled.height()) // 2,
@@ -416,7 +587,9 @@ class VideoPlayerWidget(QFrame):
             scaled.height(),
         )
         self.court_overlay.set_video_geometry(self._current_pixmap.size(), display_rect)
+        self.hawkeye_overlay.set_video_geometry(self._current_pixmap.size(), display_rect)
         self.court_overlay.raise_()
+        self.hawkeye_overlay.raise_()
 
     def _set_status(self, text: str, state: str) -> None:
         if text == self._status_text and state == self._status_state:
@@ -443,6 +616,9 @@ class VideoPlayerWidget(QFrame):
         self.set_court_overlay(court)
         self._render_current_pixmap()
         self._set_status("帧已就绪", "loaded")
+
+    def play_hawkeye_challenge(self, payload: object) -> None:
+        self.hawkeye_overlay.play(payload)
 
     def set_point_capture_enabled(self, enabled: bool) -> None:
         self._point_capture_enabled = bool(enabled)
@@ -542,6 +718,8 @@ class VideoPlayerWidget(QFrame):
         self.video_label.setCursor(Qt.CursorShape.ArrowCursor)
         self.court_overlay.clear()
         self.court_overlay.set_video_geometry(QSize(), QRect())
+        self.hawkeye_overlay.clear()
+        self.hawkeye_overlay.set_video_geometry(QSize(), QRect())
         self._set_status("未加载视频", "idle")
         self.preview_stack.setCurrentWidget(self.preview_stack.widget(0))
 

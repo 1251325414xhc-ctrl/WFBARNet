@@ -4,16 +4,16 @@
 
 QTableWidget#actionTable {
     background-color: #FFFFFF;
-    border: 1px solid #525252;
-    border-radius: 2px;
-    gridline-color: #525252;
+    border: 1px solid #D8DED8;
+    border-radius: 12px;
+    gridline-color: #EEF2EE;
     alternate-background-color: #F8F8F8;
     selection-background-color: #EAF4EA;
     selection-color: #217346;
 }
 
 QTableWidget#actionTable::item {
-    padding: 7px 10px;
+    padding: 8px 10px;
 }
 
 QTableWidget#actionTable::item:selected {
@@ -25,9 +25,9 @@ QTableWidget#actionTable::item:selected {
 QHeaderView::section {
     background-color: #F3F3F3;
     color: #323130;
-    padding: 8px 6px;
+    padding: 10px 8px;
     border: none;
-    border-right: 1px solid #525252;
-    border-bottom: 1px solid #525252;
+    border-right: 1px solid #D8DED8;
+    border-bottom: 1px solid #D8DED8;
     font-weight: 600;
 }

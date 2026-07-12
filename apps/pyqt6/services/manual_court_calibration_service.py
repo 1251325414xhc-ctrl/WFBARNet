@@ -77,10 +77,12 @@ def manual_court_prediction_from_corners(
     corner_array = np.asarray(corners, dtype=np.float32).reshape(-1, 2)
     if corner_array.shape != (4, 2):
         raise ValueError("Manual court calibration requires exactly four points.")
-    if not _court_core.is_convex_quad(corner_array):
+    ordered_corners = _court_core.order_quad_points(corner_array)
+    if ordered_corners is None:
         raise ValueError("Manual court calibration points must form a convex quadrilateral.")
+    _validate_manual_court_quad(ordered_corners, source_size)
 
-    court_to_image_h, image_to_court_h = _court_core.compute_homographies(corner_array)
+    court_to_image_h, image_to_court_h = _court_core.compute_homographies(ordered_corners)
     if court_to_image_h is None or image_to_court_h is None:
         raise ValueError("Manual court calibration points cannot produce a valid homography.")
 
@@ -102,20 +104,49 @@ def manual_court_prediction_from_corners(
         status="manual calibration",
         confidence=1.0,
         candidate_confidence=1.0,
-        reason="manual four-point calibration",
+        reason="manual four-point calibration using BWF doubles outer court",
         scheme="manual",
-        corners=_points_to_list(corner_array),
+        corners=_points_to_list(ordered_corners),
         keypoints=_keypoints_to_list(keypoint_names, keypoints),
         court_to_image_h=_matrix_to_list(court_to_image_h),
         image_to_court_h=_matrix_to_list(image_to_court_h),
         projected_lines={name: _points_to_list(points) for name, points in projected_lines.items()},
         metrics={
             "manual": True,
+            "manual_ordered_corners": True,
+            "bwf_standard": True,
+            "court_width_cm": float(_court_core.COURT_WIDTH),
+            "court_length_cm": float(_court_core.COURT_LENGTH),
             "supported_keypoints": len(keypoint_names),
         },
         detect_ms=0.0,
         rejected_count=0,
     )
+
+
+def _validate_manual_court_quad(corners: np.ndarray, source_size: tuple[int, int]) -> None:
+    width, height = int(source_size[0]), int(source_size[1])
+    if width <= 0 or height <= 0:
+        raise ValueError("Manual court calibration source size is invalid.")
+
+    frame_area = float(width * height)
+    frame_diag = float(np.hypot(width, height))
+    area = abs(_court_core.polygon_area(corners))
+    if area < max(200.0, frame_area * 0.01):
+        raise ValueError("Manual court calibration area is too small; please mark the full doubles outer court.")
+
+    edge_lengths = [
+        float(np.linalg.norm(corners[(index + 1) % 4] - corners[index]))
+        for index in range(4)
+    ]
+    if min(edge_lengths) < max(12.0, frame_diag * 0.03):
+        raise ValueError("Manual court calibration edges are too short; please mark the full doubles outer court.")
+
+    top_width, right_depth, bottom_width, left_depth = edge_lengths
+    width_ratio = max(top_width, bottom_width) / max(1.0, min(top_width, bottom_width))
+    depth_ratio = max(left_depth, right_depth) / max(1.0, min(left_depth, right_depth))
+    if width_ratio > 5.0 or depth_ratio > 5.0:
+        raise ValueError("Manual court calibration shape is too distorted; please click the four doubles outer corners again.")
 
 
 def create_manual_court_calibration_service() -> ManualCourtCalibrationService:

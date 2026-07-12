@@ -5,7 +5,7 @@
 QLabel#videoLabel {
     background-color: #2A2F3A;
     border: 1px dashed #4A5060;
-    border-radius: 4px;
+    border-radius: 12px;
     color: #8A95A8;
     font-size: 15px;
 }
@@ -36,22 +36,22 @@ QSlider#videoTimeline::groove:horizontal {
     height: 4px;
     background: #3A3F4B;
     border: none;
-    border-radius: 2px;
+    border-radius: 3px;
 }
 
 QSlider#videoTimeline::sub-page:horizontal {
     background: #4FA3E0;
-    border-radius: 2px;
+    border-radius: 3px;
 }
 
 QSlider#videoTimeline::add-page:horizontal {
     background: #3A3F4B;
-    border-radius: 2px;
+    border-radius: 3px;
 }
 
 QSlider#videoTimeline::handle:horizontal {
-    width: 12px;
-    margin: -4px 0;
+    width: 14px;
+    margin: -5px 0;
     background: #4FA3E0;
     border-radius: 6px;
 }

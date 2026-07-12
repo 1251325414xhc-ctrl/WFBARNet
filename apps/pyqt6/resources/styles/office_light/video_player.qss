@@ -5,8 +5,8 @@
 /* --- 占位符 --- */
 QLabel#videoLabel {
     background-color: #F8F8F8;
-    border: 1px dashed #525252;
-    border-radius: 2px;
+    border: 1px dashed #C9D6C9;
+    border-radius: 12px;
     color: #605E5C;
     font-size: 15px;
 }
@@ -41,24 +41,24 @@ QSlider#videoTimeline {
 
 QSlider#videoTimeline::groove:horizontal {
     height: 4px;
-    background: #525252;
+    background: #D8DED8;
     border: none;
-    border-radius: 2px;
+    border-radius: 3px;
 }
 
 QSlider#videoTimeline::sub-page:horizontal {
     background: #217346;
-    border-radius: 2px;
+    border-radius: 3px;
 }
 
 QSlider#videoTimeline::add-page:horizontal {
-    background: #525252;
-    border-radius: 2px;
+    background: #D8DED8;
+    border-radius: 3px;
 }
 
 QSlider#videoTimeline::handle:horizontal {
-    width: 12px;
-    margin: -4px 0;
+    width: 14px;
+    margin: -5px 0;
     background: #217346;
     border-radius: 6px;
 }

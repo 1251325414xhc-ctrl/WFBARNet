@@ -8,15 +8,16 @@ import numpy as np
 from torch import nn
 
 from src.builders.bst_input_adapter import prepare_bst_batch, prepare_bst_sample
+from src.court.dimensions import COURT_LENGTH_CM, COURT_WIDTH_CM
 from src.models.bst_runtime import decode_merged_display_class, run_bst_inference
 from src.utils.structures import FrameResult
 
 
 DEFAULT_BST_COURT_INFO = {
     "border_L": 0.0,
-    "border_R": 610.0,
+    "border_R": COURT_WIDTH_CM,
     "border_U": 0.0,
-    "border_D": 1340.0,
+    "border_D": COURT_LENGTH_CM,
 }
 
 

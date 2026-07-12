@@ -332,15 +332,15 @@
                     </div>
                     <div class="d-flex align-items-start gap-3 mb-3">
                       <span class="badge bg-green-lt text-green">优势</span>
-                      <div>连续多拍中保持较高击球稳定性，失误主要集中在被动后场。</div>
+                      <div data-report-field="advantage_summary">暂无足够动作样本。</div>
                     </div>
                     <div class="d-flex align-items-start gap-3 mb-3">
                       <span class="badge bg-yellow-lt text-yellow">风险</span>
-                      <div>远端姿态与球点置信度波动时，部分击球类型需要人工复核。</div>
+                      <div data-report-field="risk_summary">暂无可判定风险。</div>
                     </div>
                     <div class="d-flex align-items-start gap-3">
                       <span class="badge bg-blue-lt text-blue">训练</span>
-                      <div>建议安排后场两点启动、吊杀上网衔接和被动防守落点控制训练。</div>
+                      <div data-report-field="training_focus">请先完成有效视频分析。</div>
                     </div>
                   </div>
                 </div>
@@ -351,24 +351,8 @@
                   <div class="card-header">
                     <h2 class="card-title">击球类型分布</h2>
                   </div>
-                  <div class="card-body">
-                    <div class="mb-3">
-                      <div class="d-flex justify-content-between mb-1"><span>高远球</span><span>28%</span></div>
-                      <div class="bar-track"><div class="bar-fill" style="width: 28%"></div></div>
-                    </div>
-                    <div class="mb-3">
-                      <div class="d-flex justify-content-between mb-1"><span>吊球</span><span>18%</span></div>
-                      <div class="bar-track"><div class="bar-fill" style="width: 18%"></div></div>
-                    </div>
-                    <div class="mb-3">
-                      <div class="d-flex justify-content-between mb-1"><span>杀球</span><span>22%</span></div>
-                      <div class="bar-track"><div class="bar-fill" style="width: 22%"></div></div>
-                    </div>
-                    <div class="mb-3">
-                      <div class="d-flex justify-content-between mb-1"><span>挑球/推挡</span><span>32%</span></div>
-                      <div class="bar-track"><div class="bar-fill" style="width: 32%"></div></div>
-                    </div>
-                    <div class="text-secondary">动作类型可由 BST 模型输出或由 API 报告服务填充。</div>
+                  <div class="card-body" data-report-field="stroke_distribution_rows">
+                    <div class="text-secondary">本次视频动作样本不足，暂不展示击球类型分布。</div>
                   </div>
                 </div>
               </div>
@@ -503,19 +487,8 @@
                     <h2 class="card-title">训练建议</h2>
                   </div>
                   <div class="card-body">
-                    <div class="row g-3">
-                      <div class="col-md-4">
-                        <div class="fw-bold mb-1">后场启动</div>
-                        <div class="text-secondary">两点后场启动，每组 45 秒，关注第一步方向和回中节奏。</div>
-                      </div>
-                      <div class="col-md-4">
-                        <div class="fw-bold mb-1">网前衔接</div>
-                        <div class="text-secondary">吊杀上网组合练习，记录上网后下一拍击球质量。</div>
-                      </div>
-                      <div class="col-md-4">
-                        <div class="fw-bold mb-1">落点控制</div>
-                        <div class="text-secondary">后场被动球落点分区训练，减少中场半高球回放。</div>
-                      </div>
+                    <div class="row g-3" data-report-field="training_plan_rows">
+                      <div class="col-12 text-secondary">本次数据不足以生成专项训练建议。</div>
                     </div>
                   </div>
                 </div>

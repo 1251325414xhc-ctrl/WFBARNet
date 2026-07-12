@@ -3,9 +3,9 @@
  * ============================================================ */
 
 QPushButton {
-    min-height: 32px;
-    border-radius: 4px;
-    padding: 4px 12px;
+    min-height: 34px;
+    border-radius: 9px;
+    padding: 5px 14px;
     font-size: 13px;
     font-weight: 600;
     border: 1px solid #4A5060;
@@ -30,7 +30,8 @@ QPushButton#btnFullscreen,
 QPushButton#btnPreviewMode,
 QPushButton#btnCameraMode,
 QPushButton#btnBatchMode,
-QPushButton#btnRefreshCameras {
+QPushButton#btnRefreshCameras,
+QPushButton#btnHawkeyeChallenge {
     min-height: 20px;
     padding-top: 4px;
     padding-bottom: 4px;
@@ -44,10 +45,7 @@ QPushButton#btnBatchMode {
     background-color: #2A2F3A;
     border-color: #3A3F4B;
     border-bottom: none;
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
-    border-bottom-left-radius: 0px;
-    border-bottom-right-radius: 0px;
+    border-radius: 10px;
     padding: 8px 16px;
     font-weight: 500;
 }
@@ -113,6 +111,17 @@ QPushButton#btnFullscreen:checked {
     background-color: #4FA3E0;
     border-color: #4FA3E0;
 }
+
+QPushButton#btnHawkeyeChallenge {
+    min-width: 92px;
+    color: #111827;
+    background-color: #FACC15;
+    border-color: #EAB308;
+}
+
+QPushButton#btnHawkeyeChallenge:hover { background-color: #FDE047; border-color: #CA8A04; }
+QPushButton#btnHawkeyeChallenge:pressed { background-color: #EAB308; border-color: #A16207; }
+QPushButton#btnHawkeyeChallenge:disabled { background-color: #22262E; color: #5A6070; border-color: #3A3F4B; }
 
 QPushButton#btnForceStop {
     min-width: 76px;

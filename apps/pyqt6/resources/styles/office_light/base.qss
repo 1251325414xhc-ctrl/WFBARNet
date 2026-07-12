@@ -3,7 +3,7 @@
  * ============================================================ */
 
 QMainWindow {
-    background-color: #F3F3F3;
+    background-color: #F6F8F6;
     color: #1F1F1F;
     font-family: "Segoe UI", "Microsoft YaHei", -apple-system, sans-serif;
     font-size: 14px;
@@ -16,5 +16,5 @@ QWidget {
 }
 
 #appRoot {
-    background-color: #F3F3F3;
+    background-color: #F6F8F6;
 }

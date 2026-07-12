@@ -6,6 +6,8 @@ from typing import Iterable, Sequence
 import cv2
 import numpy as np
 
+from src.court.dimensions import COURT_LENGTH_CM, COURT_WIDTH_CM
+
 
 PointLike = Sequence[float] | np.ndarray
 
@@ -39,8 +41,8 @@ class HeatmapRenderer:
         width: int,
         height: int,
         *,
-        court_width: float = 610.0,
-        court_height: float = 1340.0,
+        court_width: float = COURT_WIDTH_CM,
+        court_height: float = COURT_LENGTH_CM,
         config: HeatmapRenderConfig | None = None,
     ) -> None:
         self.config = config or HeatmapRenderConfig()

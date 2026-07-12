@@ -6,7 +6,7 @@ QProgressBar#topProgress,
 QProgressBar {
     background-color: #3A3F4B;
     border: none;
-    border-radius: 3px;
+    border-radius: 6px;
     text-align: center;
     color: #C8D0DC;
     font-weight: 600;
@@ -14,14 +14,14 @@ QProgressBar {
 
 QProgressBar::chunk {
     background-color: #4FA3E0;
-    border-radius: 3px;
+    border-radius: 6px;
 }
 
 QLineEdit#videoPathEdit,
 QLineEdit#modelPathEdit {
     background-color: #2A2F3A;
     border: 1px solid #4A5060;
-    border-radius: 4px;
+    border-radius: 9px;
     color: #E8EDF5;
     padding: 6px 10px;
 }
@@ -29,21 +29,23 @@ QLineEdit#modelPathEdit {
 QLineEdit#videoPathEdit:focus,
 QLineEdit#modelPathEdit:focus { border-color: #4FA3E0; }
 
-QComboBox#cameraDeviceCombo {
+QComboBox#cameraDeviceCombo,
+QComboBox#hawkeyeModeCombo {
     background-color: #2A2F3A;
     border: 1px solid #4A5060;
-    border-radius: 4px;
+    border-radius: 9px;
     color: #E8EDF5;
     padding: 6px 10px;
 }
 
-QComboBox#cameraDeviceCombo:focus { border-color: #4FA3E0; }
+QComboBox#cameraDeviceCombo:focus,
+QComboBox#hawkeyeModeCombo:focus { border-color: #4FA3E0; }
 
 /* --- 主题切换按钮 --- */
 QToolButton#styleBtn {
     background-color: #2A2F3A;
     border: 1px solid #4A5060;
-    border-radius: 4px;
+    border-radius: 9px;
     color: #E8EDF5;
     padding: 0px 10px;
     font-size: 13px;
@@ -70,13 +72,13 @@ QToolButton#styleBtn::menu-indicator {
 QMenu#styleMenu {
     background-color: #22262E;
     border: 1px solid #4A5060;
-    border-radius: 6px;
+    border-radius: 10px;
     padding: 4px;
 }
 
 QMenu#styleMenu::item {
     padding: 7px 14px;
-    border-radius: 4px;
+    border-radius: 8px;
     color: #E8EDF5;
     font-size: 13px;
 }
@@ -90,7 +92,7 @@ QTextEdit#logConsole {
     background-color: #1A1D23;
     color: #C8D0DC;
     border: 1px solid #3A3F4B;
-    border-radius: 4px;
-    padding: 8px;
+    border-radius: 12px;
+    padding: 10px;
     font-family: Consolas, Monaco, "Courier New", monospace;
 }

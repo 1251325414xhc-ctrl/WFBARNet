@@ -90,6 +90,13 @@ class ReportGenerationRequest:
 
     def to_payload(self) -> dict[str, Any]:
         """Return the JSON-serializable interface payload for API transmission."""
+        local_report_data = build_user_report_data_from_rally_record(
+            self.rally_record,
+            user_player=self.user_player,
+            athlete_name=self.athlete_name,
+            video_name=self.video_name,
+            generated_at=self.generated_at,
+        )
         return {
             "interface_version": REPORT_INTERFACE_VERSION,
             "task": "badminton_report_generation",
@@ -103,6 +110,8 @@ class ReportGenerationRequest:
                 "user_player": self.user_player,
                 "video_name": self.video_name,
                 "rally_record": self.rally_record,
+                "local_report_data": local_report_data,
+                "action_analysis": local_report_data.get("action_analysis"),
             },
         }
 
@@ -193,8 +202,10 @@ class OpenAICompatibleReportApiClient(ReportApiClient):
                     "role": "system",
                     "content": (
                         "你是羽毛球训练报告生成模型。请基于结构化数据输出中文训练复盘，"
-                        "优先返回 JSON 对象，字段包含 report_text；如能生成完整可视化数据，"
-                        "可附带 report_data 或 html。"
+                        "所有动作分析必须严格依据 data.rally_record 和其中的 action_analysis、"
+                        "stroke_distribution、details.hits 等真实字段；样本不足时要明确说明不足，"
+                        "不要虚构动作、比分、得分原因或不存在的技术问题。优先返回 JSON 对象，"
+                        "字段包含 report_text；如能生成完整可视化数据，可附带 report_data 或 html。"
                     ),
                 },
                 {
@@ -333,6 +344,7 @@ def render_tabler_report_html(report_data: Mapping[str, Any]) -> str:
     opponent = _mapping(players.get("opponent"))
     reliability = list(_sequence(report_data.get("reliability")))
     zone_distribution = list(_sequence(report_data.get("zone_distribution")))
+    action_analysis = _mapping(report_data.get("action_analysis"))
     metrics = list(_sequence(summary.get("metrics")))
 
     template = _inject_tabler_report_data(template, template_data)
@@ -366,6 +378,9 @@ def render_tabler_report_html(report_data: Mapping[str, Any]) -> str:
         "mid_zone": _fmt_percent(zones.get("mid", 0.0)),
         "back_zone": _fmt_percent(zones.get("back", 0.0)),
         "ai_summary": _summary_html(summary),
+        "advantage_summary": escape(str(action_analysis.get("advantage") or "暂无足够动作样本。")),
+        "risk_summary": escape(str(action_analysis.get("risk") or "暂无可判定风险。")),
+        "training_focus": escape(str(action_analysis.get("training_focus") or "请先完成有效视频分析。")),
         "bottom_distance": _fmt_meters(user.get("distance_m")),
         "top_distance": _fmt_meters(opponent.get("distance_m")),
         "track_visible_rate": _fmt_percent(_find_reliability(reliability, ("球", "track", "visible"))),
@@ -373,6 +388,8 @@ def render_tabler_report_html(report_data: Mapping[str, Any]) -> str:
         "court_status": "manual",
         "bst_coverage": _fmt_percent(_avg_reliability(reliability)),
         "notes": _notes_text(report_data),
+        "stroke_distribution_rows": _render_temp_stroke_rows(report_data.get("stroke_distribution")),
+        "training_plan_rows": _render_temp_training_rows(report_data.get("training_plan")),
         "rally_rows": _render_temp_rally_rows(template_data.get("rallies")),
         "event_rows": _render_temp_event_rows(template_data.get("events")),
     }
@@ -515,6 +532,45 @@ def _tabler_events(value: object) -> list[dict[str, Any]]:
             }
         )
     return events
+
+
+def _render_temp_stroke_rows(value: object) -> str:
+    strokes = [_mapping(item) for item in _sequence(value)]
+    total = sum(_float(item.get("value")) for item in strokes)
+    rows = []
+    for item in strokes[:8]:
+        name = str(item.get("name") or "未知动作")
+        count = _float(item.get("value"))
+        if count <= 0:
+            continue
+        percent = count / max(1.0, total)
+        rows.append(
+            '<div class="mb-3">'
+            f'<div class="d-flex justify-content-between mb-1"><span>{escape(name)}</span><span>{escape(_fmt_percent(percent))}</span></div>'
+            f'<div class="bar-track"><div class="bar-fill" style="width: {max(2.0, percent * 100.0):.1f}%"></div></div>'
+            f'<div class="text-secondary small mt-1">识别 {int(count)} 次</div>'
+            "</div>"
+        )
+    if not rows:
+        return '<div class="text-secondary">本次视频动作样本不足，暂不展示击球类型分布。</div>'
+    rows.append('<div class="text-secondary">以上比例来自本次视频实际 BST/击球识别结果。</div>')
+    return "".join(rows)
+
+
+def _render_temp_training_rows(value: object) -> str:
+    cards = []
+    for item in _sequence(value)[:3]:
+        plan = _mapping(item)
+        cards.append(
+            '<div class="col-md-4">'
+            f'<div class="fw-bold mb-1">{escape(str(plan.get("title") or "训练项"))}</div>'
+            f'<div class="text-secondary">{escape(str(plan.get("content") or ""))}</div>'
+            f'<div class="small text-secondary mt-2">{escape(str(plan.get("frequency") or ""))} · {escape(str(plan.get("target") or ""))}</div>'
+            "</div>"
+        )
+    if not cards:
+        return '<div class="col-12 text-secondary">本次数据不足以生成专项训练建议。</div>'
+    return "".join(cards)
 
 
 def _render_temp_rally_rows(value: object) -> str:
@@ -715,10 +771,12 @@ def _merge_api_report_data(
             summary["level_note"] = str(level_note)
         payload["summary"] = summary
 
-    for key in ("improvements", "training_plan", "events"):
+    for key in ("action_analysis", "improvements", "training_plan", "events", "stroke_distribution"):
         value = api_data.get(key)
         if isinstance(value, list) and value:
             payload[key] = value
+        elif isinstance(value, Mapping) and value:
+            payload[key] = dict(value)
     return payload
 
 

@@ -49,6 +49,7 @@ from apps.pyqt6.views.components.video_player_panel_runtime import (
     VideoTimelineWidget,
 )
 from apps.pyqt6.views.heatmap_renderer import HeatmapRenderer, HeatmapRenderConfig
+from src.court.dimensions import BWF_COURT
 from src.utils.report_generation import copy_tabler_report_assets
 
 
@@ -312,14 +313,14 @@ class StrokePieChartWidget(QWidget):
 
 
 class CourtHeatmapWidget(QWidget):
-    COURT_LENGTH_MM = 13400.0
-    COURT_WIDTH_MM = 6100.0
-    COURT_LENGTH_CM = 1340.0
-    COURT_WIDTH_CM = 610.0
-    LINE_WIDTH_MM = 40.0
-    SINGLES_SIDE_MARGIN_MM = 460.0
-    DOUBLE_LONG_SERVICE_FROM_BACK_MM = 760.0
-    SHORT_SERVICE_FROM_NET_MM = 1980.0
+    COURT_LENGTH_MM = BWF_COURT.length_mm
+    COURT_WIDTH_MM = BWF_COURT.doubles_width_mm
+    COURT_LENGTH_CM = BWF_COURT.length_cm
+    COURT_WIDTH_CM = BWF_COURT.doubles_width_cm
+    LINE_WIDTH_MM = BWF_COURT.line_width_mm
+    SINGLES_SIDE_MARGIN_MM = BWF_COURT.singles_side_margin_mm
+    DOUBLE_LONG_SERVICE_FROM_BACK_MM = BWF_COURT.doubles_long_service_from_back_mm
+    SHORT_SERVICE_FROM_NET_MM = BWF_COURT.short_service_from_net_mm
     HEATMAP_MAX_POINTS = 1600
     HEATMAP_REFRESH_INTERVAL = 12
 
@@ -864,6 +865,7 @@ class MainWindow(QMainWindow):
     modelSwitchesChanged = pyqtSignal(bool, bool)
     debugCsvChanged = pyqtSignal(bool)
     manualCourtCalibrationRequested = pyqtSignal()
+    hawkeyeChallengeRequested = pyqtSignal()
     batchFolderBrowseRequested = pyqtSignal()
     batchRallySelectionChanged = pyqtSignal(str)
     batchExportRequested = pyqtSignal()
@@ -872,11 +874,11 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("羽毛球动作识别分析平台")
-        self.resize(1360, 860)
-        self.setMinimumSize(1200, 760)
+        self.resize(1440, 900)
+        self.setMinimumSize(1180, 740)
         self._video_fullscreen = False
         self._video_fullscreen_previous_state = Qt.WindowState.WindowNoState
-        self._normal_root_margins = (20, 20, 20, 20)
+        self._normal_root_margins = (18, 18, 18, 18)
         self._analytics_opacity_effect: QGraphicsOpacityEffect | None = None
         self._analytics_panel_overlay = False
 
@@ -885,8 +887,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.central_widget)
 
         self.root_layout = QVBoxLayout(self.central_widget)
-        self.root_layout.setContentsMargins(20, 20, 20, 20)
-        self.root_layout.setSpacing(16)
+        self.root_layout.setContentsMargins(18, 18, 18, 18)
+        self.root_layout.setSpacing(14)
 
         self._build_header()
         self._build_body()
@@ -895,8 +897,8 @@ class MainWindow(QMainWindow):
         self.header_card = QFrame()
         self.header_card.setObjectName("headerCard")
         header_layout = QHBoxLayout(self.header_card)
-        header_layout.setContentsMargins(20, 18, 20, 18)
-        header_layout.setSpacing(18)
+        header_layout.setContentsMargins(22, 18, 22, 18)
+        header_layout.setSpacing(20)
 
         brand_col = QVBoxLayout()
         brand_col.setSpacing(6)
@@ -981,7 +983,7 @@ class MainWindow(QMainWindow):
     def _build_body(self) -> None:
         self.body_layout = QHBoxLayout()
         body_layout = self.body_layout
-        body_layout.setSpacing(16)
+        body_layout.setSpacing(18)
 
         self._build_preview_panel(body_layout)
         self._build_analytics_panel(body_layout)
@@ -1011,9 +1013,10 @@ class MainWindow(QMainWindow):
         preview_layout.setSpacing(14)
 
         self.preview_mode_bar = QWidget()
+        self.preview_mode_bar.setObjectName("previewModeBar")
         preview_header = QHBoxLayout(self.preview_mode_bar)
         preview_header.setContentsMargins(0, 0, 0, 0)
-        preview_header.setSpacing(2)
+        preview_header.setSpacing(6)
 
         self.btn_preview_mode = QPushButton("视频预览")
         self.btn_preview_mode.setObjectName("btnPreviewMode")
@@ -1037,11 +1040,11 @@ class MainWindow(QMainWindow):
         self.progress_bar.setObjectName("topProgress")
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFixedHeight(16)
+        self.progress_bar.setFixedHeight(12)
         self.progress_bar.setVisible(False)
 
         self.video_player = VideoPlayerWidget()
-        self.video_player.setMinimumHeight(360)
+        self.video_player.setMinimumHeight(410)
         self.video_player.fullscreenRequested.connect(self.toggle_video_fullscreen)
 
         court_controls = QFrame()
@@ -1049,11 +1052,24 @@ class MainWindow(QMainWindow):
         court_controls_layout = QHBoxLayout(court_controls)
         court_controls_layout.setContentsMargins(0, 0, 0, 0)
         court_controls_layout.setSpacing(8)
+        self.hawkeye_mode_combo = QComboBox()
+        self.hawkeye_mode_combo.setObjectName("hawkeyeModeCombo")
+        self.hawkeye_mode_combo.setToolTip("选择鹰眼判界使用单打边界或双打边界")
+        self.hawkeye_mode_combo.addItem("双打边界", "doubles")
+        self.hawkeye_mode_combo.addItem("单打边界", "singles")
+        self.hawkeye_mode_combo.setFixedWidth(108)
+        self.btn_hawkeye_challenge = QPushButton("鹰眼挑战")
+        self.btn_hawkeye_challenge.setObjectName("btnHawkeyeChallenge")
+        self.btn_hawkeye_challenge.setToolTip("点击后自动判断上一个球的落点；如果暂未检测到落点，会在日志中提示")
+        self.btn_hawkeye_challenge.setEnabled(True)
+        self.btn_hawkeye_challenge.clicked.connect(self.hawkeyeChallengeRequested.emit)
         court_controls_layout.addStretch(1)
+        court_controls_layout.addWidget(self.hawkeye_mode_combo)
+        court_controls_layout.addWidget(self.btn_hawkeye_challenge)
 
-        self.btn_redetect_court = QPushButton("重新标注球场")
+        self.btn_redetect_court = QPushButton("手动标定球场")
         self.btn_redetect_court.setObjectName("btnRedetectCourt")
-        self.btn_redetect_court.setToolTip("自动标定完成后，可重新点击四角或直接拖动角点进行修正")
+        self.btn_redetect_court.setToolTip("手动点击世界羽联标准双打外框四角 TL、TR、BR、BL；不要点发球区线或单打边线，标定后可拖动角点微调")
         self.btn_redetect_court.setEnabled(False)
         self.btn_redetect_court.clicked.connect(self.manualCourtCalibrationRequested.emit)
         court_controls_layout.addWidget(self.btn_redetect_court)
@@ -1128,7 +1144,7 @@ class MainWindow(QMainWindow):
         preview_shell_layout.addWidget(self.preview_mode_bar, 0)
         preview_shell_layout.addWidget(preview_panel, stretch=1)
 
-        body_layout.addWidget(preview_shell, stretch=6)
+        body_layout.addWidget(preview_shell, stretch=7)
 
     def _build_analytics_panel(self, body_layout: QHBoxLayout) -> None:
         self.analytics_panel = QFrame()
@@ -1193,7 +1209,7 @@ class MainWindow(QMainWindow):
         self.table_actions.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table_actions.setAlternatingRowColors(True)
         self.table_actions.verticalHeader().setVisible(False)
-        self.table_actions.setShowGrid(True)
+        self._polish_table(self.table_actions)
 
         overview_layout.addLayout(metrics_grid)
         overview_layout.addLayout(section_header)
@@ -1232,7 +1248,7 @@ class MainWindow(QMainWindow):
         self.table_data_summary.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table_data_summary.setAlternatingRowColors(True)
         self.table_data_summary.verticalHeader().setVisible(False)
-        self.table_data_summary.setShowGrid(True)
+        self._polish_table(self.table_data_summary)
         summary_layout.addWidget(self.table_data_summary)
 
         details_page = QWidget()
@@ -1252,7 +1268,7 @@ class MainWindow(QMainWindow):
         self.table_data_details.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table_data_details.setAlternatingRowColors(True)
         self.table_data_details.verticalHeader().setVisible(False)
-        self.table_data_details.setShowGrid(True)
+        self._polish_table(self.table_data_details)
         details_layout.addWidget(self.table_data_details)
 
         self.data_subtabs.addTab(summary_page, "汇总")
@@ -1460,6 +1476,14 @@ class MainWindow(QMainWindow):
         settings_layout.addStretch(1)
         self.tabs.addTab(tab_settings, "设置")
 
+    def _polish_table(self, table: QTableWidget) -> None:
+        table.setShowGrid(False)
+        table.setWordWrap(False)
+        table.setCornerButtonEnabled(False)
+        table.verticalHeader().setDefaultSectionSize(36)
+        table.horizontalHeader().setHighlightSections(False)
+        table.horizontalHeader().setMinimumSectionSize(72)
+
     def _create_metric_card(self, title: str, value: str) -> tuple[QFrame, QLabel]:
         container = QFrame()
         container.setObjectName("metricCard")
@@ -1506,7 +1530,8 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._position_fullscreen_analytics_panel()
+        if self._analytics_panel_overlay:
+            self._position_fullscreen_analytics_panel()
 
     def toggle_video_fullscreen(self) -> None:
         self.set_video_fullscreen(not self._video_fullscreen)
@@ -1523,23 +1548,26 @@ class MainWindow(QMainWindow):
         self._video_fullscreen = enabled
         self.header_card.setVisible(not enabled)
         self.preview_mode_bar.setVisible(not enabled)
+        self.analytics_panel.setVisible(not enabled)
 
         margins = (6, 6, 6, 6) if enabled else self._normal_root_margins
         self.root_layout.setContentsMargins(*margins)
-        self.root_layout.setSpacing(8 if enabled else 16)
-        self.body_layout.setSpacing(8 if enabled else 16)
-        self._set_analytics_panel_opacity(0.46 if enabled else 1.0)
+        self.root_layout.setSpacing(6 if enabled else 14)
+        self.body_layout.setSpacing(0 if enabled else 18)
+        self.body_layout.setStretch(0, 1 if enabled else 7)
+        self.body_layout.setStretch(1, 0 if enabled else 5)
+        self._set_analytics_panel_opacity(1.0)
         self.video_player.set_fullscreen_mode(enabled)
 
         if enabled:
-            self._float_analytics_panel()
             self.showFullScreen()
-            self._position_fullscreen_analytics_panel()
         elif self._video_fullscreen_previous_state & Qt.WindowState.WindowMaximized:
             self._dock_analytics_panel()
+            self.analytics_panel.setVisible(True)
             self.showMaximized()
         else:
             self._dock_analytics_panel()
+            self.analytics_panel.setVisible(True)
             self.showNormal()
 
     def _float_analytics_panel(self) -> None:
@@ -1554,11 +1582,11 @@ class MainWindow(QMainWindow):
 
     def _dock_analytics_panel(self) -> None:
         if not self._analytics_panel_overlay:
-            self.body_layout.setStretch(0, 6)
+            self.body_layout.setStretch(0, 7)
             self.body_layout.setStretch(1, 5)
             return
         self.body_layout.addWidget(self.analytics_panel, stretch=5)
-        self.body_layout.setStretch(0, 6)
+        self.body_layout.setStretch(0, 7)
         self.body_layout.setStretch(1, 5)
         self.analytics_panel.show()
         self._analytics_panel_overlay = False
@@ -1633,6 +1661,10 @@ class MainWindow(QMainWindow):
             return None
         return int(self.camera_device_combo.currentData())
 
+    def selected_hawkeye_court_mode(self) -> str:
+        value = self.hawkeye_mode_combo.currentData()
+        return str(value) if value in ("singles", "doubles") else "doubles"
+
     def set_batch_folder_path(self, path: str) -> None:
         self.batch_folder_edit.setText(path)
         self.batch_folder_edit.setToolTip(path)
@@ -1663,6 +1695,12 @@ class MainWindow(QMainWindow):
 
     def set_report_export_enabled(self, enabled: bool) -> None:
         self.btn_export_report.setEnabled(bool(enabled))
+
+    def set_hawkeye_challenge_enabled(self, enabled: bool) -> None:
+        self.btn_hawkeye_challenge.setEnabled(bool(enabled))
+
+    def play_hawkeye_challenge(self, payload: object) -> None:
+        self.video_player.play_hawkeye_challenge(payload)
 
     def set_report_preview_file(self, path: str | Path) -> None:
         self.report_preview.load_report_file(Path(path))
@@ -1774,7 +1812,7 @@ class MainWindow(QMainWindow):
 
     def set_manual_court_capture_enabled(self, enabled: bool) -> None:
         self.video_player.set_point_capture_enabled(enabled)
-        self.btn_redetect_court.setText("取消重新标注" if enabled else "重新标注球场")
+        self.btn_redetect_court.setText("取消手动标定" if enabled else "手动标定球场")
 
     def set_court_overlay(self, court: object | None) -> None:
         self.video_player.set_court_overlay(court)

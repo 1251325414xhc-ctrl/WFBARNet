@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from math import cos, hypot, isfinite, radians
 from typing import Any, Protocol, Sequence
 
+from src.court.dimensions import COURT_LENGTH_CM, COURT_WIDTH_CM
 from src.utils.structures import TrackResult
 
 
@@ -14,8 +15,8 @@ FrameShape = tuple[int, ...] | list[int] | None
 PersonBBox = tuple[float, float, float, float]
 PersonBBoxes = Sequence[Sequence[float]] | None
 CourtMatrix = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
-COURT_WIDTH = 610.0
-COURT_LENGTH = 1340.0
+COURT_WIDTH = COURT_WIDTH_CM
+COURT_LENGTH = COURT_LENGTH_CM
 
 
 class TrackFilterAlgorithm(Protocol):

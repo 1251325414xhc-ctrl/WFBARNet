@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import csv
@@ -25,6 +26,8 @@ from apps.pyqt6.utils.style import apply_theme, discover_themes
 from apps.pyqt6.utils.theme_transition import start_theme_ripple_transition
 from apps.pyqt6.views.main_window_refined import MainWindow
 from src.court.batch_court import BatchCourtPredictor
+from src.court.dimensions import COURT_LENGTH_CM, COURT_WIDTH_CM
+from src.hawkeye import judge_landing, judge_landing_event
 from src.models.bst_runtime import build_bst_model
 from src.models.bst_stroke_runtime import BSTStrokeRecognizer
 from src.models.pose_branch import PoseBranch
@@ -108,22 +111,35 @@ def open_camera_capture(
     verify_frame: bool = False,
     quiet: bool = False,
 ) -> tuple[cv2.VideoCapture, str]:
-    openers = [
-        ("Auto", lambda: cv2.VideoCapture(camera_index)),
-        ("MSMF", lambda: cv2.VideoCapture(camera_index + int(getattr(cv2, "CAP_MSMF", 0)))),
-        ("DSHOW", lambda: cv2.VideoCapture(camera_index + int(getattr(cv2, "CAP_DSHOW", 0)))),
+    openers: list[tuple[str, int | None]] = [
+        ("DSHOW", int(getattr(cv2, "CAP_DSHOW", 0))),
+        ("MSMF", int(getattr(cv2, "CAP_MSMF", 0))),
+        ("Auto", None),
     ]
 
     def _open() -> tuple[cv2.VideoCapture, str]:
-        for backend_name, opener in openers:
-            cap = opener()
+        for backend_name, backend_id in openers:
+            cap = (
+                cv2.VideoCapture(camera_index)
+                if backend_id is None or backend_id <= 0
+                else cv2.VideoCapture(camera_index, backend_id)
+            )
             if not cap.isOpened():
                 cap.release()
                 continue
 
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            cap.set(cv2.CAP_PROP_FPS, 30)
             if verify_frame:
-                ok, frame = cap.read()
+                ok = False
+                frame = None
+                for _attempt in range(8):
+                    ok, frame = cap.read()
+                    if ok and frame is not None:
+                        break
+                    QThread.msleep(30)
                 if not ok or frame is None:
                     cap.release()
                     continue
@@ -258,6 +274,84 @@ def project_ball_visual_intersection(
     return project_image_point(h, (x, y))
 
 
+def project_ball_event_to_court(
+    event: object,
+    court_prediction: object | None,
+) -> tuple[float, float] | None:
+    if not isinstance(event, dict):
+        return None
+    ball_xy = event.get("ball_xy")
+    if not isinstance(ball_xy, (list, tuple)) or len(ball_xy) < 2:
+        return None
+    h = extract_image_to_court_h(court_prediction)
+    if h is None:
+        return None
+    try:
+        x = float(ball_xy[0])
+        y = float(ball_xy[1])
+    except (TypeError, ValueError):
+        return None
+    if not _is_finite(x) or not _is_finite(y) or x < 0.0 or y < 0.0:
+        return None
+    return project_image_point(h, (x, y))
+
+
+def estimate_hawkeye_landing_court_xy(
+    event: object,
+    court_prediction: object | None,
+    current_ball_court_xy: tuple[float, float] | None,
+    recent_ball_court_points: deque[tuple[float, float]],
+) -> tuple[float, float] | None:
+    if not isinstance(event, dict) or event.get("event_type") != "landing":
+        return current_ball_court_xy
+
+    event_xy = project_ball_event_to_court(event, court_prediction)
+    if event_xy is not None:
+        return event_xy
+
+    candidates: list[tuple[float, float]] = []
+    if current_ball_court_xy is not None:
+        candidates.append(current_ball_court_xy)
+
+    candidates.extend(list(recent_ball_court_points)[-5:])
+
+    clean = [
+        (float(x), float(y))
+        for x, y in candidates
+        if _is_finite(float(x)) and _is_finite(float(y))
+    ]
+    if not clean:
+        return None
+    if len(clean) == 1:
+        return clean[0]
+    xs = sorted(x for x, _y in clean)
+    ys = sorted(y for _x, y in clean)
+    mid = len(clean) // 2
+    if len(clean) % 2:
+        return xs[mid], ys[mid]
+    return (xs[mid - 1] + xs[mid]) * 0.5, (ys[mid - 1] + ys[mid]) * 0.5
+
+
+def attach_hawkeye_call_to_event(
+    event: object,
+    ball_court_xy: tuple[float, float] | None,
+) -> object:
+    if not isinstance(event, dict) or event.get("event_type") != "landing":
+        return event
+    payload = dict(event)
+    call = judge_landing_event(
+        payload,
+        ball_court_xy=ball_court_xy,
+        court_mode="doubles",
+    )
+    call_payload = call.to_dict()
+    call_payload["landing_source"] = "first_contact_event" if ball_court_xy is not None else "unprojected_event"
+    payload["hawkeye"] = call_payload
+    payload["line_call"] = call_payload["call"]
+    payload["out_by_cm"] = call_payload["out_by_cm"]
+    return payload
+
+
 def pose_person_bboxes(poses: list[PersonPoseResult]) -> list[tuple[float, float, float, float]]:
     bboxes: list[tuple[float, float, float, float]] = []
     for pose in poses:
@@ -318,13 +412,53 @@ def extract_image_to_court_h(court_prediction: object | None) -> tuple[tuple[flo
         return None
     raw_h = prediction_value(court_prediction, "image_to_court_h", None)
     if raw_h is None:
-        return None
+        raw_h = _image_to_court_h_from_corners(court_prediction)
+        if raw_h is None:
+            return None
     try:
         rows = tuple(tuple(float(value) for value in row) for row in raw_h)
     except (TypeError, ValueError):
         return None
     if len(rows) != 3 or any(len(row) != 3 for row in rows):
         return None
+    if any(not _is_finite(value) for row in rows for value in row):
+        return None
+    return rows
+
+
+def _image_to_court_h_from_corners(court_prediction: object) -> tuple[tuple[float, float, float], ...] | None:
+    corners = prediction_value(court_prediction, "corners", None)
+    if not isinstance(corners, (list, tuple)) or len(corners) != 4:
+        return None
+    image_points: list[list[float]] = []
+    for point in corners:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            return None
+        try:
+            x = float(point[0])
+            y = float(point[1])
+        except (TypeError, ValueError):
+            return None
+        if not _is_finite(x) or not _is_finite(y):
+            return None
+        image_points.append([x, y])
+    src = np.asarray(image_points, dtype=np.float32)
+    dst = np.asarray(
+        [
+            [0.0, 0.0],
+            [COURT_WIDTH_CM, 0.0],
+            [COURT_WIDTH_CM, COURT_LENGTH_CM],
+            [0.0, COURT_LENGTH_CM],
+        ],
+        dtype=np.float32,
+    )
+    try:
+        h = cv2.getPerspectiveTransform(src, dst)
+    except cv2.error:
+        return None
+    if h is None or h.shape != (3, 3):
+        return None
+    rows = tuple(tuple(float(value) for value in row) for row in h.tolist())
     if any(not _is_finite(value) for row in rows for value in row):
         return None
     return rows
@@ -559,6 +693,7 @@ class TrackNetPlaybackWorker(QThread):
         )
         trail_renderer = TrackTrailRenderer(fps=fps, history_seconds=0.5)
         event_detector = RealtimeTrajectoryEventDetector(fps=fps)
+        hawkeye_court_points: deque[tuple[float, float]] = deque(maxlen=12)
         frame_height, frame_width = current_frame.shape[:2]
         bst_recognizer = self._create_bst_recognizer(frame_width, frame_height, fps)
         pending_bst_predictions: list[dict[str, Any]] = []
@@ -643,6 +778,9 @@ class TrackNetPlaybackWorker(QThread):
                     infer_fps = 1.0 / infer_elapsed
                     ema_infer_fps = infer_fps if ema_infer_fps == 0.0 else (0.85 * ema_infer_fps + 0.15 * infer_fps)
 
+                    ball_visual_intersection = project_ball_visual_intersection(track, court_prediction)
+                    if ball_visual_intersection is not None:
+                        hawkeye_court_points.append(ball_visual_intersection)
                     frame_result = FrameResult(frame_id=frame_id, pose=last_pose, track=track)
                     trajectory_event = event_detector.update(
                         frame_result,
@@ -650,6 +788,13 @@ class TrackNetPlaybackWorker(QThread):
                         frame_shape=current_frame.shape,
                         court_prediction=court_prediction,
                     )
+                    hawkeye_landing_xy = estimate_hawkeye_landing_court_xy(
+                        trajectory_event,
+                        court_prediction,
+                        ball_visual_intersection,
+                        hawkeye_court_points,
+                    )
+                    trajectory_event = attach_hawkeye_call_to_event(trajectory_event, hawkeye_landing_xy)
                     hit_event = (
                         trajectory_event
                         if isinstance(trajectory_event, dict) and trajectory_event.get("event_type") == "hit"
@@ -660,7 +805,7 @@ class TrackNetPlaybackWorker(QThread):
                         if isinstance(trajectory_event, dict) and trajectory_event.get("event_type") == "landing"
                         else None
                     )
-                    should_emit = display_every_frame or final_pass or current_ms >= next_display_ms
+                    should_emit = display_every_frame or final_pass or current_ms >= next_display_ms or landing_event is not None
                     image = None
                     if should_emit:
                         vis_frame = current_frame.copy()
@@ -719,7 +864,6 @@ class TrackNetPlaybackWorker(QThread):
                     else:
                         distance_accumulator.reset_tracking_points()
                         player_distances_m = distance_accumulator.totals_m()
-                    ball_visual_intersection = project_ball_visual_intersection(track, court_prediction)
                     rally_stats.update_frame(
                         timestamp_ms=current_ms,
                         player_points=player_points,
@@ -949,6 +1093,7 @@ class CameraInferenceWorker(QThread):
         )
         trail_renderer = TrackTrailRenderer(fps=fps, history_seconds=0.5)
         event_detector = RealtimeTrajectoryEventDetector(fps=fps)
+        hawkeye_court_points: deque[tuple[float, float]] = deque(maxlen=12)
         frame_height, frame_width = first_frame.shape[:2]
         bst_recognizer = self._create_bst_recognizer(frame_width, frame_height, fps)
         pending_bst_predictions: list[dict[str, Any]] = []
@@ -966,6 +1111,7 @@ class CameraInferenceWorker(QThread):
         frame_log_file = open_frame_log_jsonl(self._frame_log_path)
 
         try:
+            failed_reads = 0
             with ThreadPoolExecutor(max_workers=2, thread_name_prefix="wfb-camera-infer") as infer_executor:
                 while not self._stop_requested:
                     loop_start = perf_counter()
@@ -1045,6 +1191,8 @@ class CameraInferenceWorker(QThread):
                         distance_accumulator.reset_tracking_points()
                         player_distances_m = distance_accumulator.totals_m()
                     ball_visual_intersection = project_ball_visual_intersection(track, court_prediction)
+                    if ball_visual_intersection is not None:
+                        hawkeye_court_points.append(ball_visual_intersection)
                     rally_stats.update_frame(
                         timestamp_ms=position_ms,
                         player_points=player_points,
@@ -1065,6 +1213,13 @@ class CameraInferenceWorker(QThread):
                         frame_shape=current_frame.shape,
                         court_prediction=court_prediction,
                     )
+                    hawkeye_landing_xy = estimate_hawkeye_landing_court_xy(
+                        trajectory_event,
+                        court_prediction,
+                        ball_visual_intersection,
+                        hawkeye_court_points,
+                    )
+                    trajectory_event = attach_hawkeye_call_to_event(trajectory_event, hawkeye_landing_xy)
                     hit_event = (
                         trajectory_event
                         if isinstance(trajectory_event, dict) and trajectory_event.get("event_type") == "hit"
@@ -1075,7 +1230,8 @@ class CameraInferenceWorker(QThread):
                         if isinstance(trajectory_event, dict) and trajectory_event.get("event_type") == "landing"
                         else None
                     )
-                    if position_ms >= next_display_ms:
+                    should_emit = position_ms >= next_display_ms or landing_event is not None
+                    if should_emit:
                         vis_frame = current_frame.copy()
                         trail_renderer.draw_on(
                             vis_frame,
@@ -1121,7 +1277,7 @@ class CameraInferenceWorker(QThread):
                         rally_stats.add_bst_prediction(prediction)
                     rally_record = rally_stats.export_record()
 
-                    if position_ms >= next_display_ms:
+                    if should_emit:
                         payload = {
                             "image": image,
                             "frame_id": current_frame_id,
@@ -1161,7 +1317,12 @@ class CameraInferenceWorker(QThread):
                     current_frame = next_frame
                     ok, incoming_frame = cap.read()
                     if not ok or incoming_frame is None:
-                        break
+                        failed_reads += 1
+                        if failed_reads >= 30:
+                            break
+                        self.msleep(10)
+                        continue
+                    failed_reads = 0
                     next_frame = incoming_frame
         finally:
             cap.release()
@@ -1357,6 +1518,7 @@ class BatchInferenceWorker(QThread):
         )
         distance_accumulator = PlayerDistanceAccumulator()
         event_detector = RealtimeTrajectoryEventDetector(fps=fps)
+        hawkeye_court_points: deque[tuple[float, float]] = deque(maxlen=12)
         frame_height, frame_width = current_frame.shape[:2]
         bst_recognizer = self._create_bst_recognizer(frame_width, frame_height, fps)
         rally_stats = RallyStatsAccumulator(
@@ -1445,6 +1607,8 @@ class BatchInferenceWorker(QThread):
                     else:
                         distance_accumulator.reset_tracking_points()
                     ball_visual_intersection = project_ball_visual_intersection(track, court_prediction)
+                    if ball_visual_intersection is not None:
+                        hawkeye_court_points.append(ball_visual_intersection)
                     rally_stats.update_frame(
                         timestamp_ms=current_ms,
                         player_points=player_points,
@@ -1462,6 +1626,13 @@ class BatchInferenceWorker(QThread):
                         frame_shape=current_frame.shape,
                         court_prediction=court_prediction,
                     )
+                    hawkeye_landing_xy = estimate_hawkeye_landing_court_xy(
+                        trajectory_event,
+                        court_prediction,
+                        ball_visual_intersection,
+                        hawkeye_court_points,
+                    )
+                    trajectory_event = attach_hawkeye_call_to_event(trajectory_event, hawkeye_landing_xy)
                     hit_event = (
                         trajectory_event
                         if isinstance(trajectory_event, dict) and trajectory_event.get("event_type") == "hit"
@@ -1664,6 +1835,9 @@ class MainController:
         self._last_court_log_frame = -1
         self._last_track_debug_log_time = 0.0
         self._last_track_debug_log_key = ""
+        self._recent_ball_points: deque[tuple[float, float]] = deque(maxlen=28)
+        self._recent_hawkeye_samples: deque[dict[str, Any]] = deque(maxlen=90)
+        self._last_hawkeye_payload: dict[str, Any] | None = None
 
         self.view.set_model_settings(self._pose_model_path, self._track_model_path)
         self.view.set_model_switches(self._pose_model_enabled, self._track_model_enabled)
@@ -1723,18 +1897,18 @@ class MainController:
             self._finish_manual_court_calibration(cancelled=True)
             return
         if self._is_inference_running():
-            self.view.append_log("[Court] 请先停止当前推理任务，再重新标注球场。")
+            self.view.append_log("[Court] 请先停止当前推理任务，再手动标定球场。")
             return
         if self._input_mode == "batch":
-            self.view.append_log("[Court] 批量模式暂不支持逐视频重新标注。")
+            self.view.append_log("[Court] 批量模式暂不支持逐视频手动标定。")
             return
         if self.view.video_player.source_size() is None:
-            self.view.append_log("[Court] 请先选择视频或打开摄像头预览，再重新标注球场。")
+            self.view.append_log("[Court] 请先选择视频或打开摄像头预览，再手动标定球场。")
             return
         self._manual_court_points = []
         self._manual_court_active = True
         self.view.set_manual_court_capture_enabled(True)
-        self.view.append_log("[Court] 重新标注开始：请依次点击外框四角 TL, TR, BR, BL。")
+        self.view.append_log("[Court] 手动标定开始：请点击世界羽联标准双打外框四角（不是发球区线/单打边线），建议顺序 TL, TR, BR, BL。")
 
     def handle_manual_court_point_selected(self, x: float, y: float) -> None:
         if not self._manual_court_active:
@@ -1762,13 +1936,13 @@ class MainController:
             )
         except Exception as exc:
             self._finish_manual_court_calibration(cancelled=True)
-            self.view.append_log(f"[Court] 重新标注失败: {exc}")
+            self.view.append_log(f"[Court] 手动标定失败: {exc}")
             return
 
         payload = prediction.to_dict() if hasattr(prediction, "to_dict") else prediction
         self.view.set_court_overlay(payload)
         self._finish_manual_court_calibration(cancelled=False)
-        self.view.append_log("[Court] 重新标注完成，已覆盖自动标定结果；后续分析将使用修正后的球场映射。")
+        self.view.append_log("[Court] 手动标定完成，已按 BWF 13.40m × 6.10m 双打外框生成球场映射；后续分析将使用修正后的球场尺寸。")
 
     def handle_manual_court_corner_dragged(self, corner_index: int, x: float, y: float) -> None:
         if self._manual_court_active:
@@ -1804,7 +1978,7 @@ class MainController:
         self._manual_court_points = []
         self.view.set_manual_court_capture_enabled(False)
         if cancelled:
-            self.view.append_log("[Court] 已取消重新标注。")
+            self.view.append_log("[Court] 已取消手动标定。")
 
     def _clear_manual_court_calibration(self) -> None:
         self._finish_manual_court_calibration(cancelled=False)
@@ -1847,14 +2021,14 @@ class MainController:
             else:
                 self.view.append_log(
                     f"[Court] 自动标定完成 | {scheme} | frame {frame_id} | "
-                    f"conf {confidence:.2f} | {detect_ms:.0f} ms；可点击重新标注或拖动角点修正。"
+                f"conf {confidence:.2f} | {detect_ms:.0f} ms；可点击手动标定球场或拖动角点修正。"
                 )
         elif not valid and self._last_court_log_frame < 0:
             self._last_court_log_frame = frame_id
-            self.view.append_log("[Court] 自动标定未找到可靠球场，可点击“重新标注球场”手动修正。")
+            self.view.append_log("[Court] 自动标定未找到可靠球场，可点击“手动标定球场”修正。")
 
     def _on_court_detection_failed(self, message: str) -> None:
-        self.view.append_log(f"[Court] 自动标定失败: {message}；可点击“重新标注球场”手动修正。")
+            self.view.append_log(f"[Court] 自动标定失败: {message}；可点击“手动标定球场”修正。")
 
     def _load_model_path(self, key: str, default_path: str) -> str:
         raw_value = self._settings.value(key, default_path)
@@ -2068,6 +2242,7 @@ class MainController:
         self.view.btn_camera_mode.clicked.connect(lambda: self.handle_input_mode("camera"))
         self.view.btn_batch_mode.clicked.connect(lambda: self.handle_input_mode("batch"))
         self.view.btn_refresh_cameras.clicked.connect(lambda: self._refresh_camera_devices(log=True))
+        self.view.hawkeyeChallengeRequested.connect(self.handle_hawkeye_challenge)
         self.view.camera_device_combo.currentIndexChanged.connect(lambda _index: self._set_idle_state())
         self.view.video_player.selectRequested.connect(self.handle_upload)
         self.view.video_player.forceStopRequested.connect(self.handle_force_stop)
@@ -2114,6 +2289,7 @@ class MainController:
         )
         self.view.video_player.btn_force_stop.setEnabled(has_video if self._input_mode == "video" else False)
         self.view.btn_redetect_court.setEnabled(self._input_mode != "batch")
+        self.view.set_hawkeye_challenge_enabled(True)
         self.view.video_timeline.set_interactive(self._input_mode == "video")
         self.view.set_model_settings_enabled(True)
         self.view.set_status_state("idle")
@@ -2131,6 +2307,7 @@ class MainController:
         self.view.set_report_export_enabled(False)
         self.view.video_player.btn_force_stop.setEnabled(True)
         self.view.btn_redetect_court.setEnabled(False)
+        self.view.set_hawkeye_challenge_enabled(True)
         self.view.video_timeline.set_interactive(False)
         self.view.set_model_settings_enabled(False)
         self.view.set_status_state("loading")
@@ -2139,6 +2316,10 @@ class MainController:
         self.view.set_progress_busy(False)
         self.view.reset_analysis()
         self.view.video_timeline.reset()
+        self._recent_ball_points.clear()
+        self._recent_hawkeye_samples.clear()
+        self._last_hawkeye_payload = None
+        self.view.set_hawkeye_challenge_enabled(True)
         self._reset_display_fps()
 
     def _reset_display_fps(self) -> None:
@@ -2712,6 +2893,9 @@ class MainController:
         if not isinstance(payload, dict):
             return
 
+        self._remember_ball_track_point(payload)
+        self._remember_hawkeye_landing(payload)
+
         image = payload.get("image")
         if isinstance(image, QImage):
             ball_visual_intersection = payload.get(
@@ -2757,6 +2941,9 @@ class MainController:
         if not isinstance(payload, dict):
             return
 
+        self._remember_ball_track_point(payload)
+        self._remember_hawkeye_landing(payload)
+
         image = payload.get("image")
         if isinstance(image, QImage):
             ball_visual_intersection = payload.get(
@@ -2789,6 +2976,224 @@ class MainController:
         self.view.status_label.setText(
             f"系统状态：摄像头 TrackNet + YOLO26s-Pose 推理中 | 人数 {person_count} | Score {current_score:.2f}{court_text}"
         )
+
+    def _remember_ball_track_point(self, payload: dict[str, Any]) -> None:
+        track = payload.get("track")
+        if not isinstance(track, dict) or not bool(track.get("visible")):
+            return
+        ball_xy = track.get("ball_xy")
+        if not isinstance(ball_xy, (list, tuple)) or len(ball_xy) < 2:
+            return
+        try:
+            x = float(ball_xy[0])
+            y = float(ball_xy[1])
+        except (TypeError, ValueError):
+            return
+        if x < 0.0 or y < 0.0:
+            return
+        self._recent_ball_points.append((x, y))
+        court_xy = payload.get("ball_visual_intersection", payload.get("ball_projection"))
+        court_point: list[float] | None = None
+        if isinstance(court_xy, (list, tuple)) and len(court_xy) >= 2:
+            try:
+                court_x = float(court_xy[0])
+                court_y = float(court_xy[1])
+            except (TypeError, ValueError):
+                court_x = court_y = float("nan")
+            if _is_finite(court_x) and _is_finite(court_y):
+                court_point = [court_x, court_y]
+        try:
+            score = float(track.get("score", 0.0))
+        except (TypeError, ValueError):
+            score = 0.0
+        self._recent_hawkeye_samples.append(
+            {
+                "image_xy": [x, y],
+                "court_xy": court_point,
+                "score": score,
+                "timestamp_ms": int(payload.get("position_ms", 0) or 0),
+            }
+        )
+
+    def _remember_hawkeye_landing(self, payload: dict[str, Any]) -> None:
+        event = payload.get("landing_event") or payload.get("trajectory_event")
+        if not isinstance(event, dict) or event.get("event_type") != "landing":
+            return
+        hawkeye = event.get("hawkeye")
+        if not isinstance(hawkeye, dict):
+            return
+        trajectory_points = list(self._recent_ball_points)
+        ball_xy = event.get("ball_xy")
+        if isinstance(ball_xy, (list, tuple)) and len(ball_xy) >= 2:
+            try:
+                landing_point = (float(ball_xy[0]), float(ball_xy[1]))
+            except (TypeError, ValueError):
+                landing_point = None
+            if landing_point is not None and landing_point[0] >= 0.0 and landing_point[1] >= 0.0:
+                trajectory_points.append(landing_point)
+        self._last_hawkeye_payload = {
+            "event": dict(event),
+            "hawkeye": dict(hawkeye),
+            "trajectory_points": trajectory_points[-24:],
+            "timestamp_ms": int(event.get("timestamp_ms", payload.get("position_ms", 0)) or 0),
+        }
+        self.view.set_hawkeye_challenge_enabled(True)
+
+    def handle_hawkeye_challenge(self) -> None:
+        court_mode = self._selected_hawkeye_court_mode()
+        payload = self._last_hawkeye_payload
+        if not isinstance(payload, dict):
+            fallback = self._build_hawkeye_fallback_payload(court_mode=court_mode)
+            if fallback is None:
+                self.view.append_log("[鹰眼] 暂未检测到可挑战的上一个球；请先开始分析，等待球轨迹和落点出现。")
+                return
+            self.view.play_hawkeye_challenge(fallback)
+            self._log_hawkeye_challenge_result(fallback, estimated=True)
+            return
+        payload = self._rejudge_hawkeye_payload_for_selected_mode(payload, court_mode)
+        hawkeye = payload.get("hawkeye")
+        if not isinstance(hawkeye, dict):
+            self.view.append_log("[鹰眼] 上一个落点缺少判界信息。")
+            return
+        if str(hawkeye.get("call", "unknown")).lower() == "unknown":
+            fallback = self._build_hawkeye_fallback_payload(court_mode=court_mode)
+            fallback_hawkeye = fallback.get("hawkeye") if isinstance(fallback, dict) else None
+            if isinstance(fallback_hawkeye, dict) and str(fallback_hawkeye.get("call", "unknown")).lower() != "unknown":
+                payload = fallback
+                hawkeye = fallback_hawkeye
+        call = str(hawkeye.get("call", "unknown")).upper()
+        out_by = float(hawkeye.get("out_by_cm", 0.0) or 0.0)
+        boundary = str(hawkeye.get("nearest_boundary", "unknown"))
+        mode_label = "单打边界" if str(hawkeye.get("court_mode", "")) == "singles" else "双打边界"
+        time_text = self._format_time_ms(int(payload.get("timestamp_ms", 0)))
+        if call == "OUT":
+            detail = f"{boundary} 出界 {out_by:.1f}cm"
+        elif call == "IN":
+            detail = f"界内，靠近 {boundary}"
+        else:
+            detail = str(hawkeye.get("reason", "落点投影不足，无法裁决"))
+        self.view.play_hawkeye_challenge(payload)
+        self.view.append_log(f"[鹰眼] 挑战上一个落点 {time_text} -> {call} | {mode_label} | {detail}")
+
+    def _selected_hawkeye_court_mode(self) -> str:
+        getter = getattr(self.view, "selected_hawkeye_court_mode", None)
+        mode = getter() if callable(getter) else "doubles"
+        return mode if mode in ("singles", "doubles") else "doubles"
+
+    def _rejudge_hawkeye_payload_for_selected_mode(
+        self,
+        payload: dict[str, Any],
+        court_mode: str,
+    ) -> dict[str, Any]:
+        hawkeye = payload.get("hawkeye")
+        if not isinstance(hawkeye, dict):
+            return payload
+        landing_xy = hawkeye.get("landing_xy")
+        if not isinstance(landing_xy, (list, tuple)) or len(landing_xy) < 2:
+            return payload
+        try:
+            court_xy = (float(landing_xy[0]), float(landing_xy[1]))
+        except (TypeError, ValueError):
+            return payload
+        confidence = float(hawkeye.get("confidence", 0.0) or 0.0)
+        call = judge_landing(court_xy, court_mode=court_mode, confidence=confidence)
+        updated = dict(payload)
+        updated_hawkeye = call.to_dict()
+        if hawkeye.get("estimated"):
+            updated_hawkeye["estimated"] = True
+        updated["hawkeye"] = updated_hawkeye
+        event = updated.get("event")
+        if isinstance(event, dict):
+            updated_event = dict(event)
+            updated_event["hawkeye"] = updated_hawkeye
+            updated["event"] = updated_event
+        return updated
+
+    def _log_hawkeye_challenge_result(self, payload: dict[str, Any], *, estimated: bool = False) -> None:
+        hawkeye = payload.get("hawkeye")
+        if not isinstance(hawkeye, dict):
+            self.view.append_log("[鹰眼] 无法生成挑战结果。")
+            return
+        call = str(hawkeye.get("call", "unknown")).upper()
+        out_by = float(hawkeye.get("out_by_cm", 0.0) or 0.0)
+        boundary = str(hawkeye.get("nearest_boundary", "unknown"))
+        mode_label = "单打边界" if str(hawkeye.get("court_mode", "")) == "singles" else "双打边界"
+        time_text = self._format_time_ms(int(payload.get("timestamp_ms", 0)))
+        prefix = "估计落点" if estimated or hawkeye.get("estimated") else "上一个落点"
+        if call == "OUT":
+            detail = f"{boundary} 出界 {out_by:.1f}cm"
+        elif call == "IN":
+            detail = f"界内，靠近 {boundary}"
+        else:
+            detail = str(hawkeye.get("reason", "落点投影不足，无法裁决"))
+        self.view.append_log(f"[鹰眼] 挑战{prefix} {time_text} -> {call} | {mode_label} | {detail}")
+
+    def _build_hawkeye_fallback_payload(self, *, court_mode: str = "doubles") -> dict[str, Any] | None:
+        trajectory_points = list(self._recent_ball_points)
+        if not trajectory_points:
+            return None
+        samples = list(self._recent_hawkeye_samples)
+        landing_image_xy = trajectory_points[-1]
+        court_samples: list[tuple[float, float, float, list[float], int]] = []
+        for sample in samples[-18:]:
+            court_xy = sample.get("court_xy")
+            image_xy = sample.get("image_xy")
+            if not isinstance(court_xy, list) or len(court_xy) < 2:
+                continue
+            if not isinstance(image_xy, list) or len(image_xy) < 2:
+                continue
+            try:
+                court_x = float(court_xy[0])
+                court_y = float(court_xy[1])
+                score = float(sample.get("score", 0.0))
+                timestamp_ms = int(sample.get("timestamp_ms", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if _is_finite(court_x) and _is_finite(court_y):
+                court_samples.append((court_x, court_y, score, image_xy, timestamp_ms))
+
+        hawkeye_payload: dict[str, Any]
+        timestamp_ms = int(samples[-1].get("timestamp_ms", 0) or 0) if samples else 0
+        if court_samples:
+            recent = court_samples[-7:]
+            xs = sorted(item[0] for item in recent)
+            ys = sorted(item[1] for item in recent)
+            mid = len(recent) // 2
+            if len(recent) % 2:
+                landing_court_xy = (xs[mid], ys[mid])
+            else:
+                landing_court_xy = ((xs[mid - 1] + xs[mid]) * 0.5, (ys[mid - 1] + ys[mid]) * 0.5)
+            closest = min(
+                recent,
+                key=lambda item: (item[0] - landing_court_xy[0]) ** 2 + (item[1] - landing_court_xy[1]) ** 2,
+            )
+            landing_image_xy = (float(closest[3][0]), float(closest[3][1]))
+            timestamp_ms = int(closest[4])
+            confidence = max(0.25, min(0.72, sum(item[2] for item in recent) / max(1, len(recent))))
+            call = judge_landing(landing_court_xy, court_mode=court_mode, confidence=confidence)
+            hawkeye_payload = call.to_dict()
+            hawkeye_payload["estimated"] = True
+            hawkeye_payload["reason"] = f"estimated from {len(recent)} recent projected ball points"
+        else:
+            hawkeye_payload = {
+                "valid": False,
+                "call": "unknown",
+                "out_by_cm": 0.0,
+                "nearest_boundary": "unknown",
+                "reason": "no recent court projection for ball point",
+                "estimated": True,
+            }
+        last_x, last_y = landing_image_xy
+        return {
+            "event": {
+                "event_type": "landing",
+                "ball_xy": [last_x, last_y],
+                "timestamp_ms": timestamp_ms,
+            },
+            "hawkeye": hawkeye_payload,
+            "trajectory_points": trajectory_points[-24:],
+            "timestamp_ms": timestamp_ms,
+        }
 
     def _on_batch_progress(self, payload: object) -> None:
         if not isinstance(payload, dict):
@@ -2883,9 +3288,22 @@ class MainController:
         x, y = (-1.0, -1.0)
         if isinstance(ball_xy, (list, tuple)) and len(ball_xy) >= 2:
             x, y = float(ball_xy[0]), float(ball_xy[1])
+        hawkeye_text = ""
+        hawkeye = event.get("hawkeye")
+        if isinstance(hawkeye, dict) and event_type == "landing":
+            call = str(hawkeye.get("call", "unknown")).upper()
+            boundary = str(hawkeye.get("nearest_boundary", "unknown"))
+            out_by = float(hawkeye.get("out_by_cm", 0.0) or 0.0)
+            if call == "OUT":
+                hawkeye_text = f" | 鹰眼 OUT | {boundary} 出界 {out_by:.1f}cm"
+            elif call == "IN":
+                hawkeye_text = f" | 鹰眼 IN | 靠近 {boundary}"
+            else:
+                reason = str(hawkeye.get("reason", "unknown"))
+                hawkeye_text = f" | 鹰眼 UNKNOWN | {reason}"
         self.view.append_log(
             f"[Event] {type_name} {time_text} | frame {int(event.get('frame_id', -1))} | "
-            f"({x:.1f},{y:.1f}) | {rule} {confidence * 100:.1f}%"
+            f"({x:.1f},{y:.1f}) | {rule} {confidence * 100:.1f}%{hawkeye_text}"
         )
 
     def _format_bst_prediction_detail(self, prediction: dict[str, Any]) -> str:

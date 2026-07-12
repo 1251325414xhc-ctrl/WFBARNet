@@ -10,6 +10,7 @@ from apps.pyqt6.services.manual_court_calibration_service import (
     ManualCourtCalibrationService,
     manual_court_prediction_from_corners,
 )
+from src.court.dimensions import COURT_LENGTH_CM, COURT_WIDTH_CM
 
 
 class ManualCourtCalibrationServiceTest(unittest.TestCase):
@@ -32,6 +33,26 @@ class ManualCourtCalibrationServiceTest(unittest.TestCase):
         self.assertEqual(len(prediction.corners), 4)
         self.assertIn("doubles_outer", prediction.projected_lines)
         self.assertEqual(len(prediction.image_to_court_h), 3)
+        self.assertTrue(prediction.metrics["bwf_standard"])
+        self.assertEqual(prediction.metrics["court_width_cm"], COURT_WIDTH_CM)
+        self.assertEqual(prediction.metrics["court_length_cm"], COURT_LENGTH_CM)
+
+    def test_manual_corners_are_ordered_before_homography(self) -> None:
+        prediction = manual_court_prediction_from_corners(
+            [
+                [470.0, 320.0],
+                [100.0, 40.0],
+                [70.0, 310.0],
+                [420.0, 48.0],
+            ],
+            source_size=(520, 360),
+        )
+
+        self.assertEqual(prediction.corners[0], [100.0, 40.0])
+        self.assertEqual(prediction.corners[1], [420.0, 48.0])
+        self.assertEqual(prediction.corners[2], [470.0, 320.0])
+        self.assertEqual(prediction.corners[3], [70.0, 310.0])
+        self.assertTrue(prediction.metrics["manual_ordered_corners"])
 
     def test_service_stores_and_clears_latest_prediction(self) -> None:
         service = ManualCourtCalibrationService()
@@ -59,9 +80,9 @@ class ManualCourtCalibrationServiceTest(unittest.TestCase):
             manual_court_prediction_from_corners(
                 [
                     [100.0, 40.0],
-                    [420.0, 48.0],
-                    [70.0, 310.0],
-                    [470.0, 320.0],
+                    [101.0, 40.0],
+                    [102.0, 41.0],
+                    [103.0, 41.0],
                 ],
                 source_size=(520, 360),
             )

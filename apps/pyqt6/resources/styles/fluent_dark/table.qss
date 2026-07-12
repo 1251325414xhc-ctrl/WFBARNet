@@ -5,14 +5,14 @@
 QTableWidget#actionTable {
     background-color: #22262E;
     border: 1px solid #3A3F4B;
-    border-radius: 4px;
+    border-radius: 12px;
     gridline-color: #2A2F3A;
     alternate-background-color: #2A2F3A;
     selection-background-color: #0F2040;
     selection-color: #4FA3E0;
 }
 
-QTableWidget#actionTable::item { padding: 6px 8px; }
+QTableWidget#actionTable::item { padding: 8px 10px; }
 
 QTableWidget#actionTable::item:selected {
     background-color: #0F2040;
@@ -23,7 +23,7 @@ QTableWidget#actionTable::item:selected {
 QHeaderView::section {
     background-color: #2A2F3A;
     color: #8A95A8;
-    padding: 8px 6px;
+    padding: 10px 8px;
     border: none;
     border-right: 1px solid #3A3F4B;
     border-bottom: 1px solid #3A3F4B;

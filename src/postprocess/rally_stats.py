@@ -5,14 +5,17 @@ from dataclasses import dataclass, field
 from math import hypot
 from typing import Any, Mapping, Sequence
 
+from src.court.dimensions import COURT_LENGTH_CM as BWF_COURT_LENGTH_CM
+from src.court.dimensions import COURT_WIDTH_CM as BWF_COURT_WIDTH_CM
+
 
 PLAYER_KEYS = ("top", "bottom")
 PLAYER_LABELS = {
     "top": "上方球员",
     "bottom": "下方球员",
 }
-COURT_WIDTH_CM = 610.0
-COURT_LENGTH_CM = 1340.0
+COURT_WIDTH_CM = BWF_COURT_WIDTH_CM
+COURT_LENGTH_CM = BWF_COURT_LENGTH_CM
 
 
 @dataclass

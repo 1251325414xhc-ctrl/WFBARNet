@@ -4,7 +4,7 @@
 
 QLabel#titleLabel {
     font-size: 28px;
-    font-weight: 600;
+    font-weight: 700;
     color: #E8EDF5;
 }
 
@@ -39,8 +39,8 @@ QLabel#videoStatus {
     background-color: #0F2040;
     color: #4FA3E0;
     border: 1px solid #1E3A5F;
-    border-radius: 4px;
-    padding: 4px 10px;
+    border-radius: 999px;
+    padding: 5px 12px;
     font-size: 12px;
     font-weight: 500;
 }

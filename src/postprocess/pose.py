@@ -5,12 +5,13 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from src.court.dimensions import COURT_LENGTH_CM, COURT_WIDTH_CM, NET_Y_CM
 from src.preprocess.pose import PosePreprocessMeta
 from src.utils.structures import PersonPoseResult
 
-COURT_WIDTH = 610.0
-COURT_LENGTH = 1340.0
-COURT_NET_Y = COURT_LENGTH / 2.0
+COURT_WIDTH = COURT_WIDTH_CM
+COURT_LENGTH = COURT_LENGTH_CM
+COURT_NET_Y = NET_Y_CM
 COURT_HALF_ORDER = ("top", "bottom")
 
 

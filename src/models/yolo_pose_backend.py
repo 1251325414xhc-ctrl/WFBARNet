@@ -7,10 +7,11 @@ from typing import Any
 
 import numpy as np
 
+from src.court.dimensions import COURT_LENGTH_CM, COURT_WIDTH_CM
 from src.models.mmpose_backend import MMPoseInferenceItem
 
-COURT_WIDTH = 610.0
-COURT_LENGTH = 1340.0
+COURT_WIDTH = COURT_WIDTH_CM
+COURT_LENGTH = COURT_LENGTH_CM
 
 
 @dataclass(slots=True)

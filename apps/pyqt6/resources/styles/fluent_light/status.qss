@@ -5,7 +5,7 @@
 /* --- 标题 / 副标题 --- */
 QLabel#titleLabel {
     font-size: 28px;
-    font-weight: 600;
+    font-weight: 700;
     color: #0F172A;
 }
 
@@ -48,8 +48,8 @@ QLabel#videoStatus {
     background-color: #EFF6FF;
     color: #0F6CBD;
     border: 1px solid #BFDBFE;
-    border-radius: 4px;
-    padding: 4px 10px;
+    border-radius: 999px;
+    padding: 5px 12px;
     font-size: 12px;
     font-weight: 500;
 }

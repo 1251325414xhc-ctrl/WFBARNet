@@ -6,8 +6,8 @@
 QProgressBar#topProgress,
 QProgressBar {
     background-color: #E6E6E6;
-    border: 1px solid #BDBDBD;
-    border-radius: 8px;
+    border: none;
+    border-radius: 6px;
     text-align: center;
     color: #323130;
     font-weight: 600;
@@ -15,15 +15,15 @@ QProgressBar {
 
 QProgressBar::chunk {
     background-color: #217346;
-    border-radius: 7px;
+    border-radius: 6px;
 }
 
 /* --- 文本输入框 --- */
 QLineEdit#videoPathEdit,
 QLineEdit#modelPathEdit {
     background-color: #FFFFFF;
-    border: 1px solid #525252;
-    border-radius: 2px;
+    border: 1px solid #C9D6C9;
+    border-radius: 9px;
     color: #1F1F1F;
     padding: 6px 10px;
 }
@@ -31,21 +31,23 @@ QLineEdit#modelPathEdit {
 QLineEdit#videoPathEdit:focus,
 QLineEdit#modelPathEdit:focus { border-color: #217346; }
 
-QComboBox#cameraDeviceCombo {
+QComboBox#cameraDeviceCombo,
+QComboBox#hawkeyeModeCombo {
     background-color: #FFFFFF;
-    border: 1px solid #525252;
-    border-radius: 2px;
+    border: 1px solid #C9D6C9;
+    border-radius: 9px;
     color: #1F1F1F;
     padding: 6px 10px;
 }
 
-QComboBox#cameraDeviceCombo:focus { border-color: #217346; }
+QComboBox#cameraDeviceCombo:focus,
+QComboBox#hawkeyeModeCombo:focus { border-color: #217346; }
 
 /* --- 主题切换按钮 --- */
 QToolButton#styleBtn {
     background-color: #F7F7F7;
-    border: 1px solid #525252;
-    border-radius: 2px;
+    border: 1px solid #C9D6C9;
+    border-radius: 9px;
     color: #1F1F1F;
     padding: 0px 12px;
     font-size: 13px;
@@ -55,13 +57,13 @@ QToolButton#styleBtn {
 
 QToolButton#styleBtn:hover {
     background-color: #F3F3F3;
-    border-color: #525252;
+    border-color: #8BBF9F;
 }
 
 QToolButton#styleBtn:pressed,
 QToolButton#styleBtn[popupMode="1"]:pressed {
     background-color: #E8E8E8;
-    border-color: #525252;
+    border-color: #8BBF9F;
 }
 
 QToolButton#styleBtn::menu-indicator {
@@ -71,14 +73,14 @@ QToolButton#styleBtn::menu-indicator {
 
 QMenu#styleMenu {
     background-color: #FFFFFF;
-    border: 1px solid #525252;
-    border-radius: 2px;
+    border: 1px solid #C9D6C9;
+    border-radius: 10px;
     padding: 2px;
 }
 
 QMenu#styleMenu::item {
     padding: 8px 14px;
-    border-radius: 2px;
+    border-radius: 8px;
     color: #1F1F1F;
     font-size: 13px;
 }
@@ -96,8 +98,8 @@ QMenu#styleMenu::item:selected {
 QTextEdit#logConsole {
     background-color: #FFFFFF;
     color: #323130;
-    border: 1px solid #525252;
-    border-radius: 2px;
-    padding: 8px;
+    border: 1px solid #D8DED8;
+    border-radius: 12px;
+    padding: 10px;
     font-family: Consolas, Monaco, "Courier New", monospace;
 }
