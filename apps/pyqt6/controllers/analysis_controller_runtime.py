@@ -3101,6 +3101,8 @@ class MainController:
         updated_hawkeye = call.to_dict()
         if hawkeye.get("estimated"):
             updated_hawkeye["estimated"] = True
+        if hawkeye.get("landing_source"):
+            updated_hawkeye["landing_source"] = hawkeye.get("landing_source")
         updated["hawkeye"] = updated_hawkeye
         event = updated.get("event")
         if isinstance(event, dict):
@@ -3155,25 +3157,22 @@ class MainController:
         hawkeye_payload: dict[str, Any]
         timestamp_ms = int(samples[-1].get("timestamp_ms", 0) or 0) if samples else 0
         if court_samples:
-            recent = court_samples[-7:]
-            xs = sorted(item[0] for item in recent)
-            ys = sorted(item[1] for item in recent)
-            mid = len(recent) // 2
-            if len(recent) % 2:
-                landing_court_xy = (xs[mid], ys[mid])
-            else:
-                landing_court_xy = ((xs[mid - 1] + xs[mid]) * 0.5, (ys[mid - 1] + ys[mid]) * 0.5)
-            closest = min(
-                recent,
-                key=lambda item: (item[0] - landing_court_xy[0]) ** 2 + (item[1] - landing_court_xy[1]) ** 2,
+            recent = court_samples[-18:]
+            selected_index, landing_source = self._select_hawkeye_fallback_landing_index(recent)
+            selected = recent[selected_index]
+            landing_court_xy = (float(selected[0]), float(selected[1]))
+            landing_image_xy = (float(selected[3][0]), float(selected[3][1]))
+            timestamp_ms = int(selected[4])
+            confidence_samples = recent[max(0, selected_index - 2) : min(len(recent), selected_index + 3)]
+            confidence = max(
+                0.25,
+                min(0.78, sum(item[2] for item in confidence_samples) / max(1, len(confidence_samples))),
             )
-            landing_image_xy = (float(closest[3][0]), float(closest[3][1]))
-            timestamp_ms = int(closest[4])
-            confidence = max(0.25, min(0.72, sum(item[2] for item in recent) / max(1, len(recent))))
             call = judge_landing(landing_court_xy, court_mode=court_mode, confidence=confidence)
             hawkeye_payload = call.to_dict()
             hawkeye_payload["estimated"] = True
-            hawkeye_payload["reason"] = f"estimated from {len(recent)} recent projected ball points"
+            hawkeye_payload["landing_source"] = landing_source
+            hawkeye_payload["reason"] = f"estimated first landing from {len(recent)} projected ball points"
         else:
             hawkeye_payload = {
                 "valid": False,
@@ -3194,6 +3193,37 @@ class MainController:
             "trajectory_points": trajectory_points[-24:],
             "timestamp_ms": timestamp_ms,
         }
+
+    def _select_hawkeye_fallback_landing_index(
+        self,
+        samples: list[tuple[float, float, float, list[float], int]],
+    ) -> tuple[int, str]:
+        if len(samples) <= 2:
+            return max(0, len(samples) - 1), "fallback_last_projected_point"
+
+        speeds: list[float] = []
+        for index in range(1, len(samples)):
+            prev_xy = samples[index - 1][3]
+            curr_xy = samples[index][3]
+            speeds.append(float(np.hypot(float(curr_xy[0]) - float(prev_xy[0]), float(curr_xy[1]) - float(prev_xy[1]))))
+
+        for index in range(2, len(samples)):
+            speed_before = speeds[index - 1]
+            future = speeds[index : min(len(speeds), index + 3)]
+            if not future:
+                continue
+            speed_after = sum(future) / len(future)
+            if speed_before >= 8.0 and speed_after <= max(4.0, speed_before * 0.35):
+                return min(index + 1, len(samples) - 1), "fallback_first_speed_drop"
+
+        low_speed_threshold = 4.0
+        required_tail = 3
+        for index in range(1, len(samples) - required_tail + 1):
+            tail = speeds[index : index + required_tail]
+            if len(tail) == required_tail and all(speed <= low_speed_threshold for speed in tail):
+                return index, "fallback_low_speed_tail_start"
+
+        return len(samples) - 1, "fallback_last_projected_point"
 
     def _on_batch_progress(self, payload: object) -> None:
         if not isinstance(payload, dict):

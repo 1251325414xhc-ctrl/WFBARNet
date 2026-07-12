@@ -6,6 +6,7 @@ from src.postprocess.trajectory_events import (
     RealtimeTrajectoryEventDetector,
     TrajectoryEventCandidateGenerator,
     TrajectoryEventDetectorConfig,
+    _TrajectoryPoint,
 )
 from src.utils.structures import FrameResult, TrackResult
 
@@ -319,6 +320,57 @@ class TrajectoryEventCandidateGeneratorTest(unittest.TestCase):
 
 
 class RealtimeTrajectoryEventDetectorTest(unittest.TestCase):
+    def test_refines_landing_to_first_impact_point(self) -> None:
+        detector = RealtimeTrajectoryEventDetector(TrajectoryEventDetectorConfig())
+        samples = [
+            _TrajectoryPoint(frame_id=0, timestamp_ms=0, x=100.0, y=250.0, visible=1, score=0.8),
+            _TrajectoryPoint(frame_id=1, timestamp_ms=40, x=115.0, y=320.0, visible=1, score=0.8),
+            _TrajectoryPoint(frame_id=2, timestamp_ms=80, x=130.0, y=400.0, visible=1, score=0.8),
+            _TrajectoryPoint(frame_id=3, timestamp_ms=120, x=140.0, y=455.0, visible=1, score=0.8),
+            _TrajectoryPoint(frame_id=4, timestamp_ms=160, x=142.0, y=448.0, visible=1, score=0.8),
+            _TrajectoryPoint(frame_id=5, timestamp_ms=200, x=143.0, y=447.0, visible=1, score=0.8),
+        ]
+        event = {
+            "event_type": "landing",
+            "frame_id": 4,
+            "timestamp_ms": 160,
+            "ball_xy": [142.0, 448.0],
+            "rule": "speed_step",
+            "confidence": 0.9,
+            "features": {},
+        }
+
+        refined, refined_index = detector._refine_landing_event(event, samples, 4)
+
+        self.assertEqual(refined_index, 3)
+        self.assertEqual(refined["frame_id"], 3)
+        self.assertEqual(refined["timestamp_ms"], 120)
+        self.assertEqual(refined["ball_xy"], [140.0, 455.0])
+        self.assertEqual(refined["features"]["landing_refined_source"], "impact_y_max_first_contact")
+
+    def test_flat_landing_refine_keeps_candidate_frame(self) -> None:
+        detector = RealtimeTrajectoryEventDetector(TrajectoryEventDetectorConfig())
+        samples = [
+            _TrajectoryPoint(frame_id=0, timestamp_ms=0, x=100.0, y=250.0, visible=1, score=0.8),
+            _TrajectoryPoint(frame_id=1, timestamp_ms=40, x=120.0, y=250.0, visible=1, score=0.8),
+            _TrajectoryPoint(frame_id=2, timestamp_ms=80, x=121.0, y=250.0, visible=1, score=0.8),
+            _TrajectoryPoint(frame_id=3, timestamp_ms=120, x=122.0, y=250.0, visible=1, score=0.8),
+        ]
+        event = {
+            "event_type": "landing",
+            "frame_id": 2,
+            "timestamp_ms": 80,
+            "ball_xy": [121.0, 250.0],
+            "rule": "speed_step",
+            "confidence": 0.9,
+            "features": {},
+        }
+
+        refined, refined_index = detector._refine_landing_event(event, samples, 2)
+
+        self.assertEqual(refined_index, 2)
+        self.assertEqual(refined["ball_xy"], [121.0, 250.0])
+
     def test_emits_confirmed_event_with_original_frame_metadata(self) -> None:
         detector = RealtimeTrajectoryEventDetector(TrajectoryEventDetectorConfig(fps=25.0))
         event = None

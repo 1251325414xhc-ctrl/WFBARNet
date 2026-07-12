@@ -64,6 +64,9 @@ class TrajectoryEventDetectorConfig:
     landing_resume_distance_min_px: float = 20.0
     landing_min_height_ratio: float = 0.30
     landing_court_margin_ratio: float = 0.12
+    landing_refine_window_before: int = 2
+    landing_refine_window_after: int = 3
+    landing_refine_y_band_px: float = 4.0
     event_cooldown_seconds: float = 0.18
     landing_event_cooldown_seconds: float = 0.75
     max_event_lag_frames: int = 12
@@ -918,6 +921,8 @@ class RealtimeTrajectoryEventDetector:
                 if promoted is None:
                     continue
                 event = promoted
+            if str(event["event_type"]) == "landing":
+                event, local_index = self._refine_landing_event(event, samples, local_index)
             if str(event["event_type"]) == "hit" and not self._is_hit_event_valid(
                 event,
                 samples,
@@ -1001,6 +1006,89 @@ class RealtimeTrajectoryEventDetector:
             "auxiliary_rules": [str(item) for item in _as_sequence(candidate.get("auxiliary_rules"))],
             "features": _json_safe(candidate.get("features", {})),
         }
+
+    def _refine_landing_event(
+        self,
+        event: dict[str, object],
+        samples: Sequence[_TrajectoryPoint],
+        local_index: int,
+    ) -> tuple[dict[str, object], int]:
+        if not samples or local_index < 0 or local_index >= len(samples):
+            return event, local_index
+
+        rule = str(event.get("rule", ""))
+        features = event.get("features")
+        feature_payload = dict(features) if isinstance(features, Mapping) else {}
+        if rule == "tracking_lost_bounce_end":
+            feature_payload.setdefault("landing_refined_source", "tracking_loss_bounce_peak")
+            refined = dict(event)
+            refined["features"] = _json_safe(feature_payload)
+            return refined, local_index
+
+        before = max(0, int(self.config.landing_refine_window_before))
+        after = max(0, int(self.config.landing_refine_window_after))
+        if rule in {"trajectory_end", "tracking_lost_rally_end"}:
+            after = min(after, 1)
+        start = max(0, local_index - before)
+        end = min(len(samples) - 1, local_index + after)
+        visible_indices = [
+            index
+            for index in range(start, end + 1)
+            if samples[index].visible
+            and isfinite(samples[index].x)
+            and isfinite(samples[index].y)
+            and samples[index].x >= 0.0
+            and samples[index].y >= 0.0
+        ]
+        if not visible_indices:
+            return event, local_index
+
+        # Image-space y grows downward. Around a landing speed drop the shuttle's
+        # first contact is usually the earliest point in the local maximum-y band;
+        # later low-speed samples may be the shuttle sliding or resting.
+        y_values = [float(samples[index].y) for index in visible_indices]
+        max_y = max(y_values)
+        min_y = min(y_values)
+        y_band = max(1.0, float(self.config.landing_refine_y_band_px))
+        if max_y - min_y <= y_band:
+            selected_index = local_index
+        else:
+            impact_indices = [
+                index
+                for index in visible_indices
+                if max_y - float(samples[index].y) <= y_band
+            ]
+            selected_index = min(impact_indices) if impact_indices else local_index
+        selected = samples[selected_index]
+        original_xy = event.get("ball_xy")
+        original_point = (
+            list(original_xy)
+            if isinstance(original_xy, (list, tuple)) and len(original_xy) >= 2
+            else [float(samples[local_index].x), float(samples[local_index].y)]
+        )
+
+        refined = dict(event)
+        refined.update(
+            {
+                "frame_id": int(selected.frame_id),
+                "timestamp_ms": int(selected.timestamp_ms),
+                "ball_xy": [float(selected.x), float(selected.y)],
+            }
+        )
+        feature_payload.update(
+            {
+                "landing_refined": True,
+                "landing_refined_source": "impact_y_max_first_contact",
+                "landing_original_frame_id": int(event.get("frame_id", samples[local_index].frame_id)),
+                "landing_original_timestamp_ms": int(event.get("timestamp_ms", samples[local_index].timestamp_ms)),
+                "landing_original_xy": original_point[:2],
+                "landing_refine_window": [int(samples[start].frame_id), int(samples[end].frame_id)],
+            }
+        )
+        refined["features"] = _json_safe(feature_payload)
+        if selected_index != local_index:
+            refined["confidence"] = min(0.96, max(0.0, float(refined.get("confidence", 0.0))) + 0.03)
+        return refined, selected_index
 
     def _is_hit_event_valid(
         self,

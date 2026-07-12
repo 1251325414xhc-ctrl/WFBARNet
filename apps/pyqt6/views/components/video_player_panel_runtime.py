@@ -230,6 +230,10 @@ class CourtLineOverlayWidget(QWidget):
 class HawkeyeChallengeOverlayWidget(QWidget):
     """Animated challenge overlay shown on top of the current video frame."""
 
+    _ANIMATION_MS = 900
+    _RESULT_HOLD_MS = 5000
+    _FADE_OUT_MS = 250
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -241,6 +245,7 @@ class HawkeyeChallengeOverlayWidget(QWidget):
         self._display_rect = QRect()
         self._payload: dict[str, Any] | None = None
         self._progress = 0.0
+        self._elapsed_ms = 0
         self._timer = QTimer(self)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
@@ -253,8 +258,10 @@ class HawkeyeChallengeOverlayWidget(QWidget):
     def play(self, payload: object) -> None:
         if not isinstance(payload, dict):
             return
+        self._timer.stop()
         self._payload = payload
         self._progress = 0.0
+        self._elapsed_ms = 0
         self.show()
         self.raise_()
         self._timer.start()
@@ -264,14 +271,17 @@ class HawkeyeChallengeOverlayWidget(QWidget):
         self._timer.stop()
         self._payload = None
         self._progress = 0.0
+        self._elapsed_ms = 0
         self.hide()
         self.update()
 
     def _tick(self) -> None:
-        self._progress += 0.018
-        if self._progress >= 1.0:
-            self._progress = 1.0
-            self._timer.stop()
+        self._elapsed_ms += max(1, int(self._timer.interval()))
+        self._progress = min(1.0, self._elapsed_ms / max(1, self._ANIMATION_MS))
+        total_ms = self._ANIMATION_MS + self._RESULT_HOLD_MS + self._FADE_OUT_MS
+        if self._elapsed_ms >= total_ms:
+            self.clear()
+            return
         self.update()
 
     def paintEvent(self, event) -> None:
@@ -281,7 +291,14 @@ class HawkeyeChallengeOverlayWidget(QWidget):
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.fillRect(self.rect(), QColor(2, 8, 23, 118))
+        fade = 1.0
+        fade_start_ms = self._ANIMATION_MS + self._RESULT_HOLD_MS
+        if self._elapsed_ms > fade_start_ms:
+            fade = max(
+                0.0,
+                1.0 - (self._elapsed_ms - fade_start_ms) / max(1, self._FADE_OUT_MS),
+            )
+        painter.fillRect(self.rect(), QColor(2, 8, 23, int(118 * fade)))
         self._draw_title(painter)
         self._draw_trajectory(painter, payload)
         self._draw_verdict(painter, payload)

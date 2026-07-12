@@ -5,6 +5,7 @@ import unittest
 from collections import deque
 
 from apps.pyqt6.controllers.analysis_controller_runtime import (
+    MainController,
     attach_hawkeye_call_to_event,
     estimate_hawkeye_landing_court_xy,
     project_ball_visual_intersection,
@@ -94,6 +95,21 @@ class BallVisualIntersectionTest(unittest.TestCase):
         )
 
         self.assertEqual(event["hawkeye"]["landing_source"], "first_contact_event")
+
+    def test_hawkeye_fallback_selects_first_speed_drop_not_final_stop(self) -> None:
+        samples = [
+            (100.0, 100.0, 0.8, [100.0, 100.0], 0),
+            (140.0, 100.0, 0.8, [140.0, 100.0], 40),
+            (180.0, 100.0, 0.8, [180.0, 100.0], 80),
+            (184.0, 100.0, 0.8, [184.0, 100.0], 120),
+            (185.0, 100.0, 0.8, [185.0, 100.0], 160),
+            (185.5, 100.0, 0.8, [185.5, 100.0], 200),
+        ]
+
+        index, source = MainController._select_hawkeye_fallback_landing_index(object(), samples)
+
+        self.assertEqual(index, 3)
+        self.assertEqual(source, "fallback_first_speed_drop")
 
 
 if __name__ == "__main__":
