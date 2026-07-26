@@ -5,12 +5,12 @@
  * ============================================================
  *
  *  Brand / Accent
- *    --accent:          #217346
- *    --accent-hover:    #1B5E20
- *    --accent-pressed:  #144A17
+ *    --accent:          #087F45
+ *    --accent-hover:    #066238
+ *    --accent-pressed:  #054A2D
  *
  *  Surface
- *    --bg-app:          #F4F6F9
+ *    --bg-app:          #EEF1F2
  *    --bg-card:         #FFFFFF
  *    --bg-subtle:       #F8FAFC
  *    --bg-muted:        #F1F5F9
@@ -21,9 +21,9 @@
  *    --border-muted:    #94A3B8
  *
  *  Text
- *    --text-primary:    #0F172A
- *    --text-secondary:  #1E293B
- *    --text-muted:      #64748B
+ *    --text-primary:    #17211D
+ *    --text-secondary:  #38443F
+ *    --text-muted:      #64706B
  *    --text-disabled:   #94A3B8
  *
  *  Semantic — Success
@@ -40,7 +40,7 @@
  *    --error-bg:        #FEF2F2
  *    --error-text:      #B91C1C
  *    --error-border:    #FECACA
- *    --error-accent:    #D13438
+ *    --error-accent:    #C92F38
  *    --error-border-soft: #F5B0B3
  *    --error-hover-bg:  #FDF3F4
  *    --error-pressed-bg:#FBE6E7

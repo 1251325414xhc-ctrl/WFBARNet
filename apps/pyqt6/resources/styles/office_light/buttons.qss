@@ -5,9 +5,9 @@ QToolButton {
     padding: 3px 14px;
     font-size: 13px;
     font-weight: 600;
-    border: 1px solid #C9CFD5;
+    border: 1px solid #B9C3BE;
     background-color: #FFFFFF;
-    color: #30363D;
+    color: #38443F;
 }
 
 QPushButton:hover,
@@ -21,6 +21,11 @@ QToolButton:pressed {
     background-color: #E8ECEF;
 }
 
+QPushButton:focus,
+QToolButton:focus {
+    border: 2px solid #0F6CBD;
+}
+
 QPushButton:disabled,
 QToolButton:disabled {
     background-color: #F2F4F5;
@@ -30,9 +35,9 @@ QToolButton:disabled {
 
 QPushButton#btnAnalyze {
     min-width: 104px;
-    background-color: #0B8F4D;
+    background-color: #087F45;
     color: #FFFFFF;
-    border-color: #0B8F4D;
+    border-color: #087F45;
 }
 
 QPushButton#btnAnalyze:hover {
@@ -41,13 +46,13 @@ QPushButton#btnAnalyze:hover {
 }
 
 QPushButton#btnAnalyze[actionState="running"] {
-    background-color: #E23B43;
-    border-color: #E23B43;
+    background-color: #C92F38;
+    border-color: #C92F38;
 }
 
 QPushButton#btnAnalyze[actionState="running"]:hover {
-    background-color: #C92F38;
-    border-color: #C92F38;
+    background-color: #A52129;
+    border-color: #A52129;
 }
 
 QPushButton#btnForceStop {
@@ -86,10 +91,11 @@ QPushButton#btnPreviewMode,
 QPushButton#btnCameraMode,
 QPushButton#btnBatchMode {
     min-width: 104px;
-    min-height: 36px;
+    min-height: 44px;
     border: none;
-    border-radius: 5px 5px 0px 0px;
-    padding: 4px 18px;
+    border-bottom: 3px solid transparent;
+    border-radius: 0px;
+    padding: 3px 14px 0px 14px;
     background: transparent;
     color: #4D545C;
     font-size: 14px;
@@ -98,15 +104,23 @@ QPushButton#btnBatchMode {
 QPushButton#btnPreviewMode:hover,
 QPushButton#btnCameraMode:hover,
 QPushButton#btnBatchMode:hover {
-    background-color: #F0F4F2;
+    background-color: #F7F9F8;
     color: #17653D;
 }
 
 QPushButton#btnPreviewMode:checked,
 QPushButton#btnCameraMode:checked,
 QPushButton#btnBatchMode:checked {
-    background-color: #0B8F4D;
-    color: #FFFFFF;
+    background-color: #FFFFFF;
+    color: #066238;
+    border-bottom-color: #087F45;
+}
+
+QPushButton#btnPreviewMode:focus,
+QPushButton#btnCameraMode:focus,
+QPushButton#btnBatchMode:focus {
+    border: 2px solid #0F6CBD;
+    border-bottom: 3px solid #087F45;
 }
 
 QPushButton#overlaySegment {
@@ -121,8 +135,8 @@ QPushButton#overlaySegment {
 
 QPushButton#overlaySegment:checked {
     color: #FFFFFF;
-    background-color: #0B8F4D;
-    border-color: #0B8F4D;
+    background-color: #087F45;
+    border-color: #087F45;
 }
 
 QPushButton#btnSelectVideo {
@@ -154,7 +168,7 @@ QToolButton#btnMarkClip {
 
 QPushButton#btnApplyModelSettings,
 QPushButton#btnApplyReportApiSettings {
-    background-color: #0B8F4D;
+    background-color: #087F45;
     color: #FFFFFF;
-    border-color: #0B8F4D;
+    border-color: #087F45;
 }

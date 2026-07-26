@@ -901,7 +901,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("WFBARNet - 羽毛球智能分析")
+        self.setWindowTitle("WFBARNet - 羽毛球训练分析")
         self.resize(1540, 940)
         self.setMinimumSize(1024, 680)
         self._video_fullscreen = False
@@ -928,18 +928,29 @@ class MainWindow(QMainWindow):
         self.header_card = QFrame()
         self.header_card.setObjectName("headerCard")
         header_layout = QHBoxLayout(self.header_card)
-        header_layout.setContentsMargins(24, 12, 20, 12)
-        header_layout.setSpacing(14)
+        header_layout.setContentsMargins(20, 8, 16, 8)
+        header_layout.setSpacing(16)
 
         brand_row = QHBoxLayout()
-        brand_row.setSpacing(18)
+        brand_row.setSpacing(10)
+
+        self.brand_mark = QLabel("W")
+        self.brand_mark.setObjectName("brandMark")
+        self.brand_mark.setFixedSize(34, 34)
+        self.brand_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.brand_mark.setAccessibleName("WFBARNet")
 
         self.title_label = QLabel("WFBARNet")
         self.title_label.setObjectName("titleLabel")
-        self.product_label = QLabel("羽毛球智能分析")
+        self.product_label = QLabel("羽毛球训练分析")
         self.product_label.setObjectName("productLabel")
-        brand_row.addWidget(self.title_label)
-        brand_row.addWidget(self.product_label)
+        brand_copy = QVBoxLayout()
+        brand_copy.setContentsMargins(0, 0, 0, 0)
+        brand_copy.setSpacing(2)
+        brand_copy.addWidget(self.title_label)
+        brand_copy.addWidget(self.product_label)
+        brand_row.addWidget(self.brand_mark)
+        brand_row.addLayout(brand_copy)
 
         self.header_flow_slot = QFrame(self.header_card)
         self.header_flow_slot.setObjectName("headerFlowSlot")
@@ -1020,10 +1031,10 @@ class MainWindow(QMainWindow):
         self._style_menu.setObjectName("styleMenu")
         self.style_btn.setMenu(self._style_menu)
 
-        self.btn_analyze = QPushButton("开始推理")
+        self.btn_analyze = QPushButton("开始分析")
         self.btn_analyze.setObjectName("btnAnalyze")
         self.btn_analyze.setProperty("actionState", "start")
-        self.btn_analyze.setAccessibleName("开始推理")
+        self.btn_analyze.setAccessibleName("开始分析")
         self.btn_reset = QPushButton("重置工作区")
         self.btn_reset.setObjectName("btnReset")
 
@@ -1094,7 +1105,7 @@ class MainWindow(QMainWindow):
         self.workspace_band.setObjectName("workspaceBand")
         self.body_layout = QHBoxLayout(self.workspace_band)
         body_layout = self.body_layout
-        body_layout.setContentsMargins(20, 0, 20, 18)
+        body_layout.setContentsMargins(16, 4, 16, 16)
         body_layout.setSpacing(0)
 
         self.body_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1116,8 +1127,8 @@ class MainWindow(QMainWindow):
         self.navigation_bar.setObjectName("modeNavigation")
         self.preview_mode_bar = self.navigation_bar
         navigation_layout = QHBoxLayout(self.navigation_bar)
-        navigation_layout.setContentsMargins(20, 10, 20, 0)
-        navigation_layout.setSpacing(8)
+        navigation_layout.setContentsMargins(20, 0, 20, 0)
+        navigation_layout.setSpacing(20)
 
         self.btn_preview_mode = QPushButton("视频分析")
         self.btn_preview_mode.setObjectName("btnPreviewMode")
@@ -1125,15 +1136,15 @@ class MainWindow(QMainWindow):
         self.btn_preview_mode.setChecked(True)
         self.btn_preview_mode.setAccessibleName("切换到视频分析")
 
-        self.btn_camera_mode = QPushButton("实时推理")
+        self.btn_camera_mode = QPushButton("实时分析")
         self.btn_camera_mode.setObjectName("btnCameraMode")
         self.btn_camera_mode.setCheckable(True)
-        self.btn_camera_mode.setAccessibleName("切换到实时推理")
+        self.btn_camera_mode.setAccessibleName("切换到实时分析")
 
-        self.btn_batch_mode = QPushButton("批量任务")
+        self.btn_batch_mode = QPushButton("批量分析")
         self.btn_batch_mode.setObjectName("btnBatchMode")
         self.btn_batch_mode.setCheckable(True)
-        self.btn_batch_mode.setAccessibleName("切换到批量任务")
+        self.btn_batch_mode.setAccessibleName("切换到批量分析")
 
         self.mode_button_group = QButtonGroup(self)
         self.mode_button_group.setExclusive(True)
@@ -1170,11 +1181,11 @@ class MainWindow(QMainWindow):
         self.video_player.setMinimumHeight(360)
         self.video_player.fullscreenRequested.connect(self.toggle_video_fullscreen)
 
-        self.video_player.btn_force_stop.setText("停止分析")
+        self.video_player.btn_force_stop.setText("暂停分析")
         self.video_player.btn_force_stop.setVisible(False)
         self.video_player.btn_force_stop.setAccessibleName("停止当前分析")
 
-        self.btn_redetect_court = QPushButton("重新标定")
+        self.btn_redetect_court = QPushButton("重新标定球场")
         self.btn_redetect_court.setObjectName("btnRedetectCourt")
         self.btn_redetect_court.setToolTip("自动标定完成后，可重新点击四角或直接拖动角点进行修正")
         self.btn_redetect_court.setEnabled(False)
@@ -1327,121 +1338,116 @@ class MainWindow(QMainWindow):
         tab_overview.setObjectName("overviewTab")
         overview_layout = QVBoxLayout(tab_overview)
         overview_layout.setContentsMargins(12, 10, 12, 12)
-        overview_layout.setSpacing(10)
+        overview_layout.setSpacing(8)
+
+        overview_header = QHBoxLayout()
+        overview_header.setContentsMargins(0, 0, 0, 0)
+        overview_header.setSpacing(7)
+        overview_title = QLabel("当前回合")
+        overview_title.setObjectName("sectionTitle")
+        self.rally_state_dot = QLabel()
+        self.rally_state_dot.setObjectName("rallyStateDot")
+        self.rally_state_dot.setProperty("state", "idle")
+        self.rally_state_dot.setFixedSize(8, 8)
+        self.rally_state_dot.setAccessibleName("当前回合状态")
+        self.lbl_rally_state = QLabel("未开始")
+        self.lbl_rally_state.setObjectName("rallyStateText")
+        self.lbl_rally_state.setAccessibleName("当前回合状态")
+        overview_header.addWidget(overview_title)
+        overview_header.addStretch(1)
+        overview_header.addWidget(self.rally_state_dot, 0, Qt.AlignmentFlag.AlignVCenter)
+        overview_header.addWidget(self.lbl_rally_state, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.metrics_strip = QFrame()
         self.metrics_strip.setObjectName("metricsStrip")
-        metrics_layout = QHBoxLayout(self.metrics_strip)
+        self.metrics_strip.setAccessibleName("当前回合关键指标")
+        metrics_layout = QGridLayout(self.metrics_strip)
         metrics_layout.setContentsMargins(0, 0, 0, 0)
         metrics_layout.setSpacing(0)
 
         metric_specs = (
-            ("视频帧率", "0 FPS", "realtime"),
-            ("推理帧率", "0 FPS", "inference"),
-            ("延迟", "-- ms", "latency"),
-            ("球速", "-- km/h", "speed"),
+            ("回合时长", "00:00", "duration", 0, 0),
+            ("击球次数", "0 次", "hits", 0, 2),
+            ("最高球速", "-- km/h", "speed", 2, 0),
+            ("当前动作", "等待识别", "action", 2, 2),
         )
         metric_labels: dict[str, QLabel] = {}
-        for index, (title, value, key) in enumerate(metric_specs):
+        for title, value, key, row, column in metric_specs:
             cell, value_label = self._create_metric_cell(title, value)
-            metrics_layout.addWidget(cell, 4 if key == "speed" else 3)
+            metrics_layout.addWidget(cell, row, column)
             metric_labels[key] = value_label
-            if index < len(metric_specs) - 1:
-                separator = QFrame()
-                separator.setObjectName("metricSeparator")
-                separator.setFrameShape(QFrame.Shape.VLine)
-                metrics_layout.addWidget(separator)
-        self.lbl_realtime_fps = metric_labels["realtime"]
-        self.lbl_valid_pose = metric_labels["inference"]
-        self.lbl_latency = metric_labels["latency"]
+        vertical_separator = QFrame()
+        vertical_separator.setObjectName("metricSeparator")
+        vertical_separator.setFrameShape(QFrame.Shape.VLine)
+        horizontal_separator = QFrame()
+        horizontal_separator.setObjectName("metricHorizontalSeparator")
+        horizontal_separator.setFrameShape(QFrame.Shape.HLine)
+        metrics_layout.addWidget(vertical_separator, 0, 1, 3, 1)
+        metrics_layout.addWidget(horizontal_separator, 1, 0, 1, 3)
+        metrics_layout.setColumnStretch(0, 1)
+        metrics_layout.setColumnStretch(2, 1)
+        metrics_layout.setRowStretch(0, 1)
+        metrics_layout.setRowStretch(2, 1)
+        self.lbl_rally_duration = metric_labels["duration"]
+        self.lbl_rally_hit_count = metric_labels["hits"]
         self.lbl_ball_speed = metric_labels["speed"]
-
-        current_title = QLabel("当前动作")
-        current_title.setObjectName("sectionTitle")
-
-        self.current_action_card = QFrame()
-        self.current_action_card.setObjectName("currentActionCard")
-        current_layout = QHBoxLayout(self.current_action_card)
-        current_layout.setContentsMargins(14, 14, 14, 14)
-        current_layout.setSpacing(14)
-
-        self.action_icon_label = QLabel("—")
-        self.action_icon_label.setObjectName("actionIcon")
-        self.action_icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.action_icon_label.setFixedSize(64, 64)
-        self.action_icon_label.setAccessibleName("当前动作图标")
-
-        action_text_layout = QVBoxLayout()
-        action_text_layout.setSpacing(4)
-        self.current_action_label = QLabel("等待识别")
-        self.current_action_label.setObjectName("currentActionName")
-        self.lbl_rally_state = QLabel("未开始")
-        self.lbl_rally_state.setObjectName("rallyStateText")
-        action_text_layout.addWidget(self.current_action_label)
-        action_text_layout.addWidget(self.lbl_rally_state)
-
-        confidence_layout = QVBoxLayout()
-        confidence_layout.setSpacing(7)
-        confidence_header = QHBoxLayout()
-        confidence_title = QLabel("置信度")
-        confidence_title.setObjectName("metricTitle")
-        self.current_action_confidence = QLabel("--")
-        self.current_action_confidence.setObjectName("confidenceValue")
-        confidence_header.addWidget(confidence_title)
-        confidence_header.addStretch(1)
-        confidence_header.addWidget(self.current_action_confidence)
-        self.current_action_progress = QProgressBar()
-        self.current_action_progress.setObjectName("confidenceProgress")
-        self.current_action_progress.setRange(0, 100)
-        self.current_action_progress.setValue(0)
-        self.current_action_progress.setTextVisible(False)
-        self.current_action_progress.setFixedHeight(10)
-        confidence_layout.addLayout(confidence_header)
-        confidence_layout.addWidget(self.current_action_progress)
-
-        current_layout.addWidget(self.action_icon_label)
-        current_layout.addLayout(action_text_layout, 1)
-        current_layout.addLayout(confidence_layout, 1)
+        self.current_action_label = metric_labels["action"]
+        self.current_action_label.setObjectName("currentActionValue")
 
         self.diagnostic_card = QFrame()
-        self.diagnostic_card.setObjectName("diagnosticCard")
-        diagnostic_layout = QHBoxLayout(self.diagnostic_card)
-        diagnostic_layout.setContentsMargins(14, 10, 14, 10)
-        diagnostic_layout.setSpacing(10)
-        diagnostic_icon = QLabel("!")
-        diagnostic_icon.setObjectName("diagnosticIcon")
-        diagnostic_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        diagnostic_icon.setFixedSize(30, 30)
-        self.diagnostic_label = QLabel("等待分析结果")
-        self.diagnostic_label.setObjectName("diagnosticText")
+        self.diagnostic_card.setObjectName("trainingNote")
+        self.diagnostic_card.setProperty("state", "idle")
+        diagnostic_layout = QVBoxLayout(self.diagnostic_card)
+        diagnostic_layout.setContentsMargins(12, 10, 12, 10)
+        diagnostic_layout.setSpacing(5)
+        training_note_title = QLabel("本回合关注")
+        training_note_title.setObjectName("trainingNoteTitle")
+        self.diagnostic_label = QLabel("完成动作识别后，可从关键事件中选择需要重点回看的画面。")
+        self.diagnostic_label.setObjectName("trainingNoteText")
         self.diagnostic_label.setWordWrap(True)
-        diagnostic_layout.addWidget(diagnostic_icon)
-        diagnostic_layout.addWidget(self.diagnostic_label, 1)
+        self.diagnostic_label.setAccessibleName("本回合训练关注")
+        diagnostic_layout.addWidget(training_note_title)
+        diagnostic_layout.addWidget(self.diagnostic_label)
 
-        events_title = QLabel("动作事件")
+        events_header = QHBoxLayout()
+        events_header.setContentsMargins(0, 0, 0, 0)
+        events_header.setSpacing(8)
+        events_title = QLabel("关键事件")
         events_title.setObjectName("sectionTitle")
+        self.lbl_event_count = QLabel("0 个事件")
+        self.lbl_event_count.setObjectName("sectionNote")
+        events_header.addWidget(events_title)
+        events_header.addStretch(1)
+        events_header.addWidget(self.lbl_event_count)
 
-        self.table_actions = QTableWidget(0, 4)
+        self.table_actions = QTableWidget(0, 3)
         self.table_actions.setObjectName("actionTable")
-        self.table_actions.setHorizontalHeaderLabels(["时间", "动作", "置信度", "回看"])
+        self.table_actions.setHorizontalHeaderLabels(["时间", "动作", "回看"])
         self.table_actions.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table_actions.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table_actions.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table_actions.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.table_actions.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table_actions.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table_actions.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table_actions.setAlternatingRowColors(False)
         self.table_actions.verticalHeader().setVisible(False)
         self.table_actions.setShowGrid(False)
-        self.table_actions.verticalHeader().setDefaultSectionSize(48)
+        self.table_actions.verticalHeader().setDefaultSectionSize(46)
+        self.table_actions.setAccessibleName("关键动作事件")
+        self.table_actions.setAccessibleDescription("选择事件可跳转到对应视频画面")
         self.table_actions.cellClicked.connect(self._handle_action_table_click)
+        self.table_actions.cellActivated.connect(self._handle_action_table_click)
 
+        self.save_status_label = QLabel("等待回合数据")
+        self.save_status_label.setObjectName("saveStatus")
+        self.save_status_label.setAccessibleName("回合数据保存状态")
+
+        overview_layout.addLayout(overview_header)
         overview_layout.addWidget(self.metrics_strip)
-        overview_layout.addWidget(current_title)
-        overview_layout.addWidget(self.current_action_card)
-        overview_layout.addWidget(self.diagnostic_card)
-        overview_layout.addWidget(events_title)
+        overview_layout.addLayout(events_header)
         overview_layout.addWidget(self.table_actions, 1)
+        overview_layout.addWidget(self.diagnostic_card)
+        overview_layout.addWidget(self.save_status_label)
         self.tabs.addTab(tab_overview, "概览")
 
     def _build_data_tab(self) -> None:
@@ -1453,7 +1459,7 @@ class MainWindow(QMainWindow):
         section_header = QHBoxLayout()
         section_title = QLabel("回合数据")
         section_title.setObjectName("sectionTitle")
-        section_note = QLabel("实时推理 / 批量推理共用")
+        section_note = QLabel("实时分析 / 批量分析共用")
         section_note.setObjectName("sectionNote")
         section_header.addWidget(section_title)
         section_header.addStretch(1)
@@ -1518,7 +1524,7 @@ class MainWindow(QMainWindow):
         section_header = QHBoxLayout()
         section_title = QLabel("击球类型统计")
         section_title.setObjectName("sectionTitle")
-        section_note = QLabel("按 BST 输出累计")
+        section_note = QLabel("按动作识别结果累计")
         section_note.setObjectName("sectionNote")
         section_header.addWidget(section_title)
         section_header.addStretch(1)
@@ -1582,6 +1588,50 @@ class MainWindow(QMainWindow):
         logs_layout.setContentsMargins(12, 12, 12, 12)
         logs_layout.setSpacing(8)
 
+        diagnostics_header = QHBoxLayout()
+        diagnostics_header.setContentsMargins(0, 0, 0, 0)
+        diagnostics_title = QLabel("运行诊断")
+        diagnostics_title.setObjectName("sectionTitle")
+        diagnostics_note = QLabel("仅用于性能排查")
+        diagnostics_note.setObjectName("sectionNote")
+        diagnostics_header.addWidget(diagnostics_title)
+        diagnostics_header.addStretch(1)
+        diagnostics_header.addWidget(diagnostics_note)
+
+        self.runtime_diagnostics = QFrame()
+        self.runtime_diagnostics.setObjectName("runtimeDiagnostics")
+        runtime_layout = QHBoxLayout(self.runtime_diagnostics)
+        runtime_layout.setContentsMargins(0, 0, 0, 0)
+        runtime_layout.setSpacing(0)
+        runtime_specs = (
+            ("视频显示", "0 FPS", "realtime"),
+            ("分析速度", "0 FPS", "inference"),
+            ("单帧耗时", "-- ms", "latency"),
+            ("动作可信度", "--", "confidence"),
+        )
+        runtime_labels: dict[str, QLabel] = {}
+        for index, (title, value, key) in enumerate(runtime_specs):
+            cell, value_label = self._create_metric_cell(title, value)
+            runtime_labels[key] = value_label
+            if key == "confidence":
+                self.current_action_progress = QProgressBar()
+                self.current_action_progress.setObjectName("confidenceProgress")
+                self.current_action_progress.setRange(0, 100)
+                self.current_action_progress.setValue(0)
+                self.current_action_progress.setTextVisible(False)
+                self.current_action_progress.setFixedHeight(7)
+                cell.layout().addWidget(self.current_action_progress)
+            runtime_layout.addWidget(cell, 1)
+            if index < len(runtime_specs) - 1:
+                separator = QFrame()
+                separator.setObjectName("metricSeparator")
+                separator.setFrameShape(QFrame.Shape.VLine)
+                runtime_layout.addWidget(separator)
+        self.lbl_realtime_fps = runtime_labels["realtime"]
+        self.lbl_valid_pose = runtime_labels["inference"]
+        self.lbl_latency = runtime_labels["latency"]
+        self.current_action_confidence = runtime_labels["confidence"]
+
         self._log_entries: list[str] = []
         log_toolbar = QHBoxLayout()
         log_toolbar.setSpacing(8)
@@ -1627,6 +1677,8 @@ class MainWindow(QMainWindow):
         self.btn_copy_logs.clicked.connect(self._copy_logs)
         self.btn_clear_logs.clicked.connect(self.clear_logs)
         self.btn_export_logs.clicked.connect(self._export_logs)
+        logs_layout.addLayout(diagnostics_header)
+        logs_layout.addWidget(self.runtime_diagnostics)
         logs_layout.addLayout(log_toolbar)
         logs_layout.addWidget(self.log_console)
         self.settings_subtabs.addTab(tab_logs, "诊断日志")
@@ -1794,6 +1846,7 @@ class MainWindow(QMainWindow):
         title_lbl.setObjectName("metricTitle")
         value_lbl = QLabel(value)
         value_lbl.setObjectName("metricValue")
+        value_lbl.setAccessibleName(title)
         value_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         layout.addWidget(title_lbl)
@@ -1963,17 +2016,17 @@ class MainWindow(QMainWindow):
         normalized_state = state if state in {"start", "running", "resume"} else "start"
         self._primary_action_state = normalized_state
         if normalized_state == "running":
-            text = "停止"
-            accessible_name = "停止当前推理"
+            text = "暂停分析"
+            accessible_name = "暂停当前分析"
         elif normalized_state == "resume":
-            text = "继续推理"
-            accessible_name = "继续当前推理"
+            text = "继续分析"
+            accessible_name = "继续当前分析"
         elif self._current_input_mode == "batch":
             text = "开始批量分析"
             accessible_name = "开始批量分析"
         else:
-            text = "开始推理"
-            accessible_name = "开始推理"
+            text = "开始分析"
+            accessible_name = "开始分析"
         self.btn_analyze.setText(text)
         self.btn_analyze.setAccessibleName(accessible_name)
         self.btn_analyze.setToolTip(accessible_name)
@@ -2162,7 +2215,7 @@ class MainWindow(QMainWindow):
 
     def set_manual_court_capture_enabled(self, enabled: bool) -> None:
         self.video_player.set_point_capture_enabled(enabled)
-        self.btn_redetect_court.setText("取消标定" if enabled else "重新标定")
+        self.btn_redetect_court.setText("取消标定" if enabled else "重新标定球场")
 
     def set_court_overlay(self, court: object | None) -> None:
         self.video_player.set_court_overlay(court)
@@ -2184,6 +2237,7 @@ class MainWindow(QMainWindow):
     def set_system_status(self, text: str, state: str = "idle") -> None:
         message = str(text).strip() or "系统状态：待机中"
         display_text = message.removeprefix("系统状态：").split("|", 1)[0].strip()
+        display_text = display_text.replace("推理", "分析")
         self.status_label.setText(display_text or "待机中")
         self.status_label.setToolTip(message)
         self.status_label.setAccessibleDescription(message)
@@ -2328,12 +2382,26 @@ class MainWindow(QMainWindow):
             self.table_data_details.setRowCount(0)
             self._set_rally_state(None)
             self._set_ball_speed(None)
+            self.lbl_rally_duration.setText("00:00")
+            self.lbl_rally_hit_count.setText("0 次")
+            self.save_status_label.setText("等待回合数据")
             return
         summary = record.get("summary", {})
         details = record.get("details", {})
-        self._set_rally_state(summary.get("rally_state") if isinstance(summary, dict) else None)
-        self._set_ball_speed(summary.get("ball_speed") if isinstance(summary, dict) else None)
-        self._populate_rally_summary(summary if isinstance(summary, dict) else {})
+        summary_data = summary if isinstance(summary, dict) else {}
+        self._set_rally_state(summary_data.get("rally_state"))
+        self._set_ball_speed(summary_data.get("ball_speed"))
+        self.lbl_rally_duration.setText(
+            self._fmt_clock_seconds(
+                summary_data.get("rally_duration_s", summary_data.get("duration_s"))
+            )
+        )
+        self.lbl_rally_hit_count.setText(
+            f"{int(self._num(summary_data.get('rally_hit_count')))} 次"
+        )
+        self.save_status_label.setText("回合数据已保存")
+        self.save_status_label.setAccessibleDescription("当前回合数据已写入本地运行记录")
+        self._populate_rally_summary(summary_data)
         self._populate_rally_details(details if isinstance(details, dict) else {})
 
     def _populate_rally_summary(self, summary: dict[str, object]) -> None:
@@ -2395,7 +2463,7 @@ class MainWindow(QMainWindow):
                 self.table_data_details,
                 (
                     self._fmt_time_ms(hit.get("timestamp_ms")),
-                    "BST动作" if hit.get("source") == "bst" else "球轨候选",
+                    "动作识别" if hit.get("source") == "bst" else "轨迹事件",
                     str(hit.get("player_label", "")),
                     self._zone_label(str(hit.get("zone", ""))),
                     str(hit.get("stroke", "")),
@@ -2427,17 +2495,22 @@ class MainWindow(QMainWindow):
             "complete": "回合结束",
             "rally_ended": "回合结束",
         }
-        self.lbl_rally_state.setText(mapping.get(state_text, "未开始"))
+        display_text = mapping.get(state_text, "未开始")
+        self.lbl_rally_state.setText(display_text)
+        dot_state = "success" if display_text == "回合结束" else ("loading" if display_text == "回合中" else "idle")
+        self.rally_state_dot.setProperty("state", dot_state)
+        self.rally_state_dot.setAccessibleDescription(display_text)
+        self._refresh_widget(self.rally_state_dot)
 
     def _set_ball_speed(self, speed: object | None) -> None:
         if (
             not isinstance(speed, dict)
             or int(self._num(speed.get("samples"))) <= 0
-            or not bool(speed.get("current_valid"))
+            or self._num(speed.get("max_kmh")) <= 0.0
         ):
             self.lbl_ball_speed.setText("-- km/h")
             return
-        self.lbl_ball_speed.setText(self._fmt_ball_speed(speed, "current_kmh"))
+        self.lbl_ball_speed.setText(f"{self._num(speed.get('max_kmh')):.0f} km/h")
 
     def _zone_count(self, player: dict[str, object], zone: str) -> int:
         zones = player.get("zone_hits", {})
@@ -2478,6 +2551,14 @@ class MainWindow(QMainWindow):
     def _fmt_seconds(self, value: object) -> str:
         return f"{self._num(value):.2f} s"
 
+    def _fmt_clock_seconds(self, value: object) -> str:
+        total_seconds = max(0, round(self._num(value)))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
     def _fmt_time_ms(self, value: object) -> str:
         total_seconds = max(0.0, self._num(value) / 1000.0)
         minutes = int(total_seconds // 60)
@@ -2499,37 +2580,36 @@ class MainWindow(QMainWindow):
 
         label_item = QTableWidgetItem(label)
         label_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        label_item.setToolTip(detail)
         self.table_actions.setItem(row, 1, label_item)
-
-        conf_item = QTableWidgetItem(f"{confidence * 100:.1f}%")
-        conf_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.table_actions.setItem(row, 2, conf_item)
 
         replay_item = QTableWidgetItem("回看")
         replay_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         replay_item.setToolTip(detail)
-        self.table_actions.setItem(row, 3, replay_item)
+        self.table_actions.setItem(row, 2, replay_item)
+        self.table_actions.selectRow(row)
         self.table_actions.scrollToTop()
 
         action_name = str(label).strip() or "未知动作"
         self.current_action_label.setText(action_name)
-        self.action_icon_label.setText(action_name[:1])
         self.current_action_confidence.setText(f"{confidence * 100:.0f}%")
         self.current_action_progress.setValue(round(confidence * 100))
         if confidence < 0.6:
-            self.diagnostic_label.setText("动作置信度偏低，建议回看确认")
+            self.diagnostic_label.setText("该动作识别结果需要复核。请回看对应画面后再记录训练重点。")
             self.diagnostic_card.setProperty("state", "warning")
         else:
-            self.diagnostic_label.setText("动作识别稳定")
+            self.diagnostic_label.setText("回看该动作的击球点、移动衔接和落点，确认是否加入训练重点。")
             self.diagnostic_card.setProperty("state", "success")
         self._refresh_widget(self.diagnostic_card)
+        event_count = self.table_actions.rowCount()
+        self.lbl_event_count.setText(f"{event_count} 个事件")
+        self.save_status_label.setText("关键事件已更新")
         self.video_timeline.add_event(timestamp_ms, action_name, confidence)
         self.stroke_pie_chart.increment(label)
         self._refresh_stroke_total()
 
     def _handle_action_table_click(self, row: int, column: int) -> None:
-        if column != 3:
-            return
+        del column
         time_item = self.table_actions.item(row, 0)
         if time_item is None:
             return
@@ -2560,15 +2640,19 @@ class MainWindow(QMainWindow):
         self.court_widget.clear_player_heatmap()
         self.set_player_distances(None)
         self.set_runtime_metrics(0.0, 0.0)
-        self.lbl_rally_state.setText("未开始")
+        self._set_rally_state(None)
+        self.lbl_rally_duration.setText("00:00")
+        self.lbl_rally_hit_count.setText("0 次")
         self.lbl_ball_speed.setText("-- km/h")
         self.current_action_label.setText("等待识别")
-        self.action_icon_label.setText("—")
         self.current_action_confidence.setText("--")
         self.current_action_progress.setValue(0)
-        self.diagnostic_label.setText("等待分析结果")
+        self.diagnostic_label.setText("完成动作识别后，可从关键事件中选择需要重点回看的画面。")
         self.diagnostic_card.setProperty("state", "idle")
         self._refresh_widget(self.diagnostic_card)
+        self.lbl_event_count.setText("0 个事件")
+        self.save_status_label.setText("等待回合数据")
+        self.save_status_label.setAccessibleDescription("")
         self.video_timeline.clear_events()
         self.set_rally_data(None)
         self.report_preview.load_template()

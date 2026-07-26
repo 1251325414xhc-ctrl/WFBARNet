@@ -1,11 +1,15 @@
 QTableWidget#actionTable {
     background-color: #FFFFFF;
-    border: 1px solid #DDE2E6;
-    border-radius: 6px;
+    border: none;
+    border-radius: 0px;
     gridline-color: transparent;
-    selection-background-color: #FFF0F0;
-    selection-color: #20242A;
+    selection-background-color: #EDF8F2;
+    selection-color: #17211D;
     outline: none;
+}
+
+QTableWidget#actionTable:focus {
+    border: 2px solid #0F6CBD;
 }
 
 QTableWidget#actionTable::item {
@@ -15,8 +19,8 @@ QTableWidget#actionTable::item {
 }
 
 QTableWidget#actionTable::item:selected {
-    background-color: #FFF0F0;
-    color: #20242A;
+    background-color: #EDF8F2;
+    color: #075B33;
     font-weight: 600;
 }
 

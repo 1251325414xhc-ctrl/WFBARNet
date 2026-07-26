@@ -1,18 +1,18 @@
 QMainWindow {
-    background-color: #F5F7F8;
-    color: #171A1F;
-    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background-color: #EEF1F2;
+    color: #17211D;
+    font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
     font-size: 14px;
 }
 
 QWidget {
-    color: #20242A;
-    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+    color: #17211D;
+    font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
     font-size: 14px;
 }
 
 #appRoot {
-    background-color: #F5F7F8;
+    background-color: #EEF1F2;
 }
 
 QToolTip {

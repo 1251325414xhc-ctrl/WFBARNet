@@ -91,7 +91,7 @@ QLineEdit#logSearchEdit:focus,
 QComboBox#cameraDeviceCombo:focus,
 QComboBox#modelPathEdit:focus,
 QComboBox#logFilterCombo:focus {
-    border-color: #0B8F4D;
+    border: 2px solid #0F6CBD;
 }
 
 QToolButton#styleBtn {
@@ -107,6 +107,10 @@ QToolButton#styleBtn {
 QToolButton#styleBtn::menu-indicator {
     image: none;
     width: 0px;
+}
+
+QToolButton#styleBtn:focus {
+    border: 2px solid #0F6CBD;
 }
 
 QMenu#styleMenu {

@@ -41,6 +41,7 @@ class CourtLineOverlayWidget(QWidget):
         self._dirty = True
         self._mask_alpha = 0.14
         self._line_thickness = 3.0
+        self._selected_corner_index: int | None = None
 
     def clear(self) -> None:
         if self._court is None and self._cached_pixmap is None:
@@ -48,6 +49,7 @@ class CourtLineOverlayWidget(QWidget):
         self._court = None
         self._court_key = None
         self._cached_pixmap = None
+        self._selected_corner_index = None
         self._dirty = True
         self.update()
 
@@ -58,6 +60,16 @@ class CourtLineOverlayWidget(QWidget):
             return
         self._court = court_dict
         self._court_key = court_key
+        if len(self.corners()) != 4:
+            self._selected_corner_index = None
+        self._dirty = True
+        self.update()
+
+    def set_selected_corner(self, index: int | None) -> None:
+        normalized = int(index) if index is not None and 0 <= int(index) < 4 else None
+        if normalized == self._selected_corner_index:
+            return
+        self._selected_corner_index = normalized
         self._dirty = True
         self.update()
 
@@ -233,10 +245,14 @@ class CourtLineOverlayWidget(QWidget):
         scale_y = self._display_rect.height() / max(1, self._source_size.height())
         radius = 7.0
         provisional = bool(court.get("provisional"))
-        for x, y in corners:
+        for index, (x, y) in enumerate(corners):
             label_x = self._display_rect.left() + x * scale_x
             label_y = self._display_rect.top() + y * scale_y
             center = QPointF(label_x, label_y)
+            if index == self._selected_corner_index:
+                painter.setPen(QPen(QColor("#0F6CBD"), 3.0))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(center, radius + 6.0, radius + 6.0)
             painter.setPen(QPen(QColor(90, 55, 0) if provisional else QColor(15, 55, 0), 3.0))
             painter.setBrush(QColor(255, 255, 255, 235))
             painter.drawEllipse(center, radius + 2.0, radius + 2.0)
@@ -268,6 +284,7 @@ class VideoPlayerWidget(QFrame):
         self._scaled_label_size = QSize()
         self._point_capture_enabled = False
         self._dragging_court_corner_index: int | None = None
+        self._selected_court_corner_index: int | None = None
         self._court_corner_hit_radius_px = 18.0
         self._status_text = ""
         self._status_state = ""
@@ -344,6 +361,8 @@ class VideoPlayerWidget(QFrame):
         )
         self.video_label.setMinimumSize(320, 240)
         self.video_label.setAccessibleName("视频分析画面")
+        self.video_label.setAccessibleDescription("球场标定完成后，可用数字 1 至 4 选择角点并用方向键微调")
+        self.video_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.video_label.setMouseTracking(True)
         self.video_label.installEventFilter(self)
         self.court_overlay = CourtLineOverlayWidget(self.video_label)
@@ -359,13 +378,13 @@ class VideoPlayerWidget(QFrame):
         self.analysis_badge = QLabel("待机")
         self.analysis_badge.setObjectName("analysisBadge")
         self.analysis_badge.setProperty("state", "idle")
-        self.fps_badge = QLabel("0.0 FPS")
+        self.fps_badge = QLabel("0.0 FPS", self.video_badges)
         self.fps_badge.setObjectName("runtimeBadge")
-        self.latency_badge = QLabel("-- ms")
+        self.fps_badge.setVisible(False)
+        self.latency_badge = QLabel("-- ms", self.video_badges)
         self.latency_badge.setObjectName("runtimeBadge")
+        self.latency_badge.setVisible(False)
         badge_layout.addWidget(self.analysis_badge)
-        badge_layout.addWidget(self.fps_badge)
-        badge_layout.addWidget(self.latency_badge)
         self.video_badges.adjustSize()
         self.video_badges.hide()
 
@@ -387,10 +406,22 @@ class VideoPlayerWidget(QFrame):
                 self.court_overlay.setGeometry(self.video_label.rect())
                 QTimer.singleShot(0, self._render_current_pixmap)
                 return False
+            if event_type == QEvent.Type.FocusIn:
+                if self._selected_court_corner_index is None and self.court_overlay.corners():
+                    self._select_court_corner(0)
+                else:
+                    self.court_overlay.set_selected_corner(self._selected_court_corner_index)
+                return False
+            if event_type == QEvent.Type.FocusOut:
+                self.court_overlay.set_selected_corner(None)
+                return False
+            if event_type == QEvent.Type.KeyPress and self._handle_court_key_press(event):
+                return True
             if event_type == QEvent.Type.MouseButtonPress:
                 if getattr(event, "button", lambda: None)() != Qt.MouseButton.LeftButton:
                     return False
                 position = event.position() if hasattr(event, "position") else event.pos()
+                self.video_label.setFocus(Qt.FocusReason.MouseFocusReason)
                 if self._point_capture_enabled:
                     point = self._image_point_from_label_pos(position)
                     if point is None:
@@ -400,6 +431,7 @@ class VideoPlayerWidget(QFrame):
                 corner_index = self._court_corner_index_at_label_pos(position)
                 if corner_index is not None:
                     self._dragging_court_corner_index = corner_index
+                    self._select_court_corner(corner_index)
                     self.video_label.setCursor(Qt.CursorShape.ClosedHandCursor)
                     return True
             elif event_type == QEvent.Type.MouseMove:
@@ -429,6 +461,60 @@ class VideoPlayerWidget(QFrame):
                     self._update_court_corner_cursor(position)
                     return True
         return super().eventFilter(watched, event)
+
+    def _select_court_corner(self, index: int) -> None:
+        corners = self.court_overlay.corners()
+        if not 0 <= int(index) < len(corners):
+            return
+        self._selected_court_corner_index = int(index)
+        self.court_overlay.set_selected_corner(self._selected_court_corner_index)
+        corner_names = ("左上", "右上", "右下", "左下")
+        self.video_label.setAccessibleDescription(
+            f"已选择{corner_names[self._selected_court_corner_index]}角点；使用方向键微调，按住 Shift 每次移动 10 像素"
+        )
+
+    def _handle_court_key_press(self, event: object) -> bool:
+        corners = self.court_overlay.corners()
+        if len(corners) != 4:
+            return False
+        number_keys = (
+            Qt.Key.Key_1,
+            Qt.Key.Key_2,
+            Qt.Key.Key_3,
+            Qt.Key.Key_4,
+        )
+        key = event.key()
+        if key in number_keys:
+            self._select_court_corner(number_keys.index(key))
+            event.accept()
+            return True
+        offsets = {
+            Qt.Key.Key_Left: (-1.0, 0.0),
+            Qt.Key.Key_Right: (1.0, 0.0),
+            Qt.Key.Key_Up: (0.0, -1.0),
+            Qt.Key.Key_Down: (0.0, 1.0),
+        }
+        if key not in offsets:
+            return False
+        if self._selected_court_corner_index is None:
+            self._select_court_corner(0)
+        index = self._selected_court_corner_index
+        if index is None:
+            return False
+        step = 10.0 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1.0
+        dx, dy = offsets[key]
+        x, y = corners[index]
+        source_size = self.source_size()
+        max_x = float(source_size[0] - 1) if source_size is not None else float("inf")
+        max_y = float(source_size[1] - 1) if source_size is not None else float("inf")
+        next_x = max(0.0, min(max_x, x + dx * step))
+        next_y = max(0.0, min(max_y, y + dy * step))
+        self.courtCornerDragged.emit(index, next_x, next_y)
+        self.video_label.setAccessibleDescription(
+            f"角点 {index + 1} 已移动到 {next_x:.0f}, {next_y:.0f}"
+        )
+        event.accept()
+        return True
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -512,7 +598,10 @@ class VideoPlayerWidget(QFrame):
     def set_point_capture_enabled(self, enabled: bool) -> None:
         self._point_capture_enabled = bool(enabled)
         if enabled:
+            self._selected_court_corner_index = None
+            self.court_overlay.set_selected_corner(None)
             self.video_label.setCursor(Qt.CursorShape.CrossCursor)
+            self.video_label.setFocus(Qt.FocusReason.OtherFocusReason)
         elif self._dragging_court_corner_index is None:
             self.video_label.setCursor(Qt.CursorShape.ArrowCursor)
 
@@ -525,6 +614,8 @@ class VideoPlayerWidget(QFrame):
         self.court_overlay.set_court(court)
         if not self.court_overlay.corners() and not self._point_capture_enabled:
             self._dragging_court_corner_index = None
+            self._selected_court_corner_index = None
+            self.court_overlay.set_selected_corner(None)
             self.video_label.setCursor(Qt.CursorShape.ArrowCursor)
 
     def _image_point_from_label_pos(self, position: object) -> tuple[float, float] | None:
@@ -604,6 +695,7 @@ class VideoPlayerWidget(QFrame):
         self._scaled_source_key = None
         self._scaled_label_size = QSize()
         self._dragging_court_corner_index = None
+        self._selected_court_corner_index = None
         self.path_edit.clear()
         self.path_edit.setToolTip("")
         self.video_label.clear()
@@ -769,7 +861,9 @@ class EventTimelineRail(QWidget):
         self.setObjectName("eventTimelineRail")
         self.setFixedHeight(88)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName("动作事件时间轴")
+        self.setAccessibleDescription("使用左右方向键跳转到相邻事件")
         self._duration_ms = 0
         self._position_ms = 0
         self._events: list[tuple[int, str, float]] = []
@@ -801,11 +895,42 @@ class EventTimelineRail(QWidget):
         if event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
         duration = self._effective_duration()
         bounds = QRectF(self.rect()).adjusted(22, 0, -22, 0)
         ratio = (float(event.position().x()) - bounds.left()) / max(1.0, bounds.width())
         timestamp_ms = round(max(0.0, min(1.0, ratio)) * duration)
         self.seekRequested.emit(timestamp_ms)
+        event.accept()
+
+    def keyPressEvent(self, event) -> None:
+        if not self._events:
+            super().keyPressEvent(event)
+            return
+        timestamps = [item[0] for item in self._events]
+        key = event.key()
+        if key == Qt.Key.Key_Left:
+            candidates = [timestamp for timestamp in timestamps if timestamp < self._position_ms]
+            target = candidates[-1] if candidates else timestamps[0]
+        elif key == Qt.Key.Key_Right:
+            target = next(
+                (timestamp for timestamp in timestamps if timestamp > self._position_ms),
+                timestamps[-1],
+            )
+        elif key == Qt.Key.Key_Home:
+            target = timestamps[0]
+        elif key == Qt.Key.Key_End:
+            target = timestamps[-1]
+        else:
+            super().keyPressEvent(event)
+            return
+        self._position_ms = target
+        selected = next(item for item in self._events if item[0] == target)
+        self.setAccessibleDescription(
+            f"已选择 {selected[1]}，时间 {self._format_time(target)}"
+        )
+        self.seekRequested.emit(target)
+        self.update()
         event.accept()
 
     def paintEvent(self, event) -> None:
@@ -858,6 +983,10 @@ class EventTimelineRail(QWidget):
         painter.setBrush(QColor("#0B8F4D"))
         painter.setPen(QPen(QColor("#FFFFFF"), 2.0))
         painter.drawEllipse(QPointF(current_x, baseline_y), 7.0, 7.0)
+        if self.hasFocus():
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor("#0F6CBD"), 2.0))
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(2.0, 2.0, -2.0, -2.0), 4.0, 4.0)
 
     def _effective_duration(self) -> int:
         event_end = max((event[0] for event in self._events), default=0)
@@ -872,13 +1001,9 @@ class EventTimelineRail(QWidget):
     @staticmethod
     def _event_color(label: str) -> QColor:
         text = label.casefold()
-        if "杀" in text or "smash" in text:
-            return QColor("#EF4444")
-        if "高远" in text or "clear" in text:
-            return QColor("#1597D4")
         if "失误" in text or "error" in text:
-            return QColor("#F59E0B")
-        return QColor("#0B8F4D")
+            return QColor("#C92F38")
+        return QColor("#087F45")
 
 
 class VideoTimelineWidget(QFrame):

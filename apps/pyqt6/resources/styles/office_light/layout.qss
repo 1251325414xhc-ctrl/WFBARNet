@@ -3,7 +3,7 @@ QFrame#headerCard {
     border: none;
     border-bottom: 1px solid #E3E7EA;
     border-radius: 0px;
-    min-height: 56px;
+    min-height: 64px;
 }
 
 QFrame#modeNavigation {
@@ -13,7 +13,7 @@ QFrame#modeNavigation {
 }
 
 QFrame#workspaceBand {
-    background-color: #F5F7F8;
+    background-color: #EEF1F2;
     border: none;
     padding-top: 4px;
 }
@@ -30,8 +30,12 @@ QFrame#analyticsCard {
 }
 
 QFrame#metricsStrip,
-QFrame#currentActionCard,
-QFrame#diagnosticCard,
+QFrame#runtimeDiagnostics {
+    background-color: #FFFFFF;
+    border: none;
+    border-radius: 0px;
+}
+
 QFrame#emptyStateCard {
     background-color: #FFFFFF;
     border: 1px solid #DDE2E6;
@@ -39,8 +43,13 @@ QFrame#emptyStateCard {
 }
 
 QFrame#metricsStrip {
-    min-height: 82px;
-    max-height: 94px;
+    min-height: 136px;
+    max-height: 148px;
+}
+
+QFrame#runtimeDiagnostics {
+    min-height: 88px;
+    max-height: 104px;
 }
 
 QFrame#metricCell {
@@ -56,23 +65,30 @@ QFrame#metricSeparator {
     margin-bottom: 12px;
 }
 
-QFrame#currentActionCard {
-    min-height: 78px;
+QFrame#metricHorizontalSeparator {
+    background-color: #E3E7EA;
+    border: none;
+    max-height: 1px;
+    margin-left: 12px;
+    margin-right: 12px;
 }
 
-QFrame#diagnosticCard {
-    min-height: 44px;
-    background-color: #FAFBFC;
+QFrame#trainingNote {
+    min-height: 76px;
+    max-height: 104px;
+    background-color: #F0F8F4;
+    border: 1px solid #B8D9C7;
+    border-radius: 5px;
 }
 
-QFrame#diagnosticCard[state="warning"] {
-    background-color: #FFF7F7;
-    border-color: #F5C2C4;
+QFrame#trainingNote[state="warning"] {
+    background-color: #FFF8E8;
+    border-color: #E5C46A;
 }
 
-QFrame#diagnosticCard[state="success"] {
-    background-color: #F2FBF6;
-    border-color: #B7DFC8;
+QFrame#trainingNote[state="success"] {
+    background-color: #F0F8F4;
+    border-color: #B8D9C7;
 }
 
 QFrame#videoPlayerCard {
