@@ -39,7 +39,7 @@ from src.postprocess.player_distance import PlayerDistanceAccumulator
 from src.postprocess.pose import CourtPoseTargetTracker
 from src.postprocess.rally_stats import RallyStatsAccumulator
 from src.postprocess.tracknet_v3_filter import create_tracknet_v3_ball_track_filter
-from src.postprocess.trajectory_events import RealtimeTrajectoryEventDetector
+from src.postprocess.best_stack_events import BestStackTrajectoryEventDetector
 from src.utils.exporters import TRACK_DEBUG_FIELDS, frame_result_log_record, write_frame_log_jsonl
 from src.utils.report_generation import OpenAICompatibleReportApiClient, generate_report_from_rally_record
 from src.utils.structures import FrameResult, PersonPoseResult, TrackResult
@@ -53,7 +53,7 @@ TRACK_STATE_RESET_GAP_S = 0.75
 POSE_CANDIDATE_LIMIT = 12
 POSE_COURT_MARGIN_CM = 30.0
 POSE_MAX_MISSING_SECONDS = 0.35
-POSE_INFERENCE_STRIDE = 2
+POSE_INFERENCE_STRIDE = 1
 POSE_YOLO_IMGSZ = 960
 POSE_CROP_IMGSZ = 640
 POSE_CROP_PADDING = 0.30
@@ -263,6 +263,22 @@ def project_ball_visual_intersection(
     if not _is_finite(x) or not _is_finite(y):
         return None
     return project_image_point(h, (x, y))
+
+
+def attach_hit_speed(
+    event: object,
+    rally_stats: RallyStatsAccumulator,
+) -> object:
+    if not isinstance(event, dict) or event.get("event_type") != "hit":
+        return event
+    try:
+        timestamp_ms = int(event.get("timestamp_ms", 0))
+    except (TypeError, ValueError):
+        return event
+    speed_kmh = rally_stats.peak_ball_speed_near(timestamp_ms, window_ms=500)
+    if speed_kmh is not None and np.isfinite(speed_kmh) and speed_kmh > 0.0:
+        event["speed_kmh"] = float(speed_kmh)
+    return event
 
 
 def pose_person_bboxes(poses: list[PersonPoseResult]) -> list[tuple[float, float, float, float]]:
@@ -784,7 +800,7 @@ class TrackNetPlaybackWorker(QThread):
             freeze_after_rally_end=False,
         )
         trail_renderer = TrackTrailRenderer(fps=fps, history_seconds=0.5)
-        event_detector = RealtimeTrajectoryEventDetector(fps=fps)
+        event_detector = BestStackTrajectoryEventDetector(fps=fps)
         frame_height, frame_width = current_frame.shape[:2]
         bst_recognizer = self._create_bst_recognizer(frame_width, frame_height, fps)
         pending_bst_predictions: list[dict[str, Any]] = []
@@ -866,6 +882,7 @@ class TrackNetPlaybackWorker(QThread):
                             if track_state_gap_exceeded(track_dt):
                                 track_filter.reset()
                                 track_postprocessor.reset()
+                                event_detector.reset()
                                 track_dt = frame_step_seconds(current_ms, None, fps)
                             track = track_filter.update_candidates(
                                 candidates,
@@ -896,6 +913,7 @@ class TrackNetPlaybackWorker(QThread):
                                 "frame_id": frame_id,
                                 "position_ms": current_ms,
                                 "pose": last_pose,
+                                "hit_pose": detections,
                                 "court": court_prediction,
                                 "infer_fps": ema_infer_fps,
                             },
@@ -944,7 +962,9 @@ class TrackNetPlaybackWorker(QThread):
                         timestamp_ms=current_ms,
                         frame_shape=current_frame.shape,
                         court_prediction=court_prediction,
+                        wrist_pose=output["hit_pose"],
                     )
+                    attach_hit_speed(trajectory_event, rally_stats)
                     hit_event = (
                         trajectory_event
                         if isinstance(trajectory_event, dict) and trajectory_event.get("event_type") == "hit"
@@ -1119,6 +1139,9 @@ class TrackNetPlaybackWorker(QThread):
                             final_pass = True
                             break
                         lag_ms = clock.elapsed() - max(0, current_ms - base_ms)
+                for pending_event in event_detector.flush():
+                    attach_hit_speed(pending_event, rally_stats)
+                    rally_stats.add_trajectory_event(pending_event)
         finally:
             cap.release()
             if debug_file is not None:
@@ -1259,7 +1282,7 @@ class CameraInferenceWorker(QThread):
             freeze_after_rally_end=False,
         )
         trail_renderer = TrackTrailRenderer(fps=fps, history_seconds=0.5)
-        event_detector = RealtimeTrajectoryEventDetector(fps=fps)
+        event_detector = BestStackTrajectoryEventDetector(fps=fps)
         frame_height, frame_width = first_frame.shape[:2]
         bst_recognizer = self._create_bst_recognizer(frame_width, frame_height, fps)
         pending_bst_predictions: list[dict[str, Any]] = []
@@ -1327,6 +1350,7 @@ class CameraInferenceWorker(QThread):
                         if track_state_gap_exceeded(track_dt):
                             track_filter.reset()
                             track_postprocessor.reset()
+                            event_detector.reset()
                             track_dt = frame_step_seconds(position_ms, None, fps)
                         track = track_filter.update_candidates(
                             candidates,
@@ -1354,6 +1378,7 @@ class CameraInferenceWorker(QThread):
                             "frame_id": current_frame_id,
                             "position_ms": position_ms,
                             "pose": last_pose,
+                            "hit_pose": detections,
                             "court": court_prediction,
                             "infer_fps": ema_infer_fps,
                         },
@@ -1413,7 +1438,9 @@ class CameraInferenceWorker(QThread):
                         timestamp_ms=position_ms,
                         frame_shape=current_frame.shape,
                         court_prediction=court_prediction,
+                        wrist_pose=output["hit_pose"],
                     )
+                    attach_hit_speed(trajectory_event, rally_stats)
                     hit_event = (
                         trajectory_event
                         if isinstance(trajectory_event, dict) and trajectory_event.get("event_type") == "hit"
@@ -1516,6 +1543,9 @@ class CameraInferenceWorker(QThread):
                     if not ok or incoming_frame is None:
                         break
                     next_frame = incoming_frame
+                for pending_event in event_detector.flush():
+                    attach_hit_speed(pending_event, rally_stats)
+                    rally_stats.add_trajectory_event(pending_event)
         finally:
             cap.release()
             if debug_file is not None:
@@ -1717,7 +1747,7 @@ class BatchInferenceWorker(QThread):
             ),
         )
         distance_accumulator = PlayerDistanceAccumulator()
-        event_detector = RealtimeTrajectoryEventDetector(fps=fps)
+        event_detector = BestStackTrajectoryEventDetector(fps=fps)
         frame_height, frame_width = current_frame.shape[:2]
         bst_recognizer = self._create_bst_recognizer(frame_width, frame_height, fps)
         rally_stats = RallyStatsAccumulator(
@@ -1770,7 +1800,9 @@ class BatchInferenceWorker(QThread):
                 timestamp_ms=timestamp_ms,
                 frame_shape=frame_shape,
                 court_prediction=court_prediction,
+                wrist_pose=output["hit_pose"],
             )
+            attach_hit_speed(trajectory_event, rally_stats)
             hit_event = (
                 trajectory_event
                 if isinstance(trajectory_event, dict) and trajectory_event.get("event_type") == "hit"
@@ -1843,6 +1875,7 @@ class BatchInferenceWorker(QThread):
                         if track_state_gap_exceeded(track_dt):
                             track_filter.reset()
                             track_postprocessor.reset()
+                            event_detector.reset()
                             track_dt = frame_step_seconds(current_ms, None, fps)
                         track = track_filter.update_candidates(
                             candidates,
@@ -1865,6 +1898,7 @@ class BatchInferenceWorker(QThread):
                             "frame_id": frame_id,
                             "position_ms": current_ms,
                             "pose": last_pose,
+                            "hit_pose": detections,
                             "court": court_prediction,
                             "frame_shape": current_frame.shape,
                         },
@@ -1908,6 +1942,9 @@ class BatchInferenceWorker(QThread):
                 if not self._stop_requested:
                     for lagged_frame in track_postprocessor.flush():
                         consume_lagged_frame(lagged_frame)
+                    for pending_event in event_detector.flush():
+                        attach_hit_speed(pending_event, rally_stats)
+                        rally_stats.add_trajectory_event(pending_event)
         finally:
             cap.release()
 

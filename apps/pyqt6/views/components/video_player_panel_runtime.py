@@ -39,8 +39,8 @@ class CourtLineOverlayWidget(QWidget):
         self._display_rect = QRect()
         self._cached_pixmap: QPixmap | None = None
         self._dirty = True
-        self._mask_alpha = 0.14
-        self._line_thickness = 3.0
+        self._mask_alpha = 0.0
+        self._line_thickness = 2.0
         self._selected_corner_index: int | None = None
 
     def clear(self) -> None:
@@ -132,27 +132,20 @@ class CourtLineOverlayWidget(QWidget):
             painter.setBrush(QColor(90, 210, 35, int(max(0.0, min(self._mask_alpha, 1.0)) * 255)))
             painter.drawPolygon(outer_polygon)
 
+        line_color = QColor(238, 220, 151, 225) if provisional else QColor(218, 244, 157, 225)
+        line_pen = QPen(line_color, self._line_thickness)
+        line_pen.setCapStyle(Qt.PenCapStyle.SquareCap)
+        line_pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
         if provisional:
-            dark_pen = QPen(QColor(90, 55, 0), self._line_thickness + 3.0)
-            bright_pen = QPen(QColor(255, 190, 45), self._line_thickness)
-        else:
-            dark_pen = QPen(QColor(25, 65, 0), self._line_thickness + 3.0)
-            bright_pen = QPen(QColor(110, 245, 40), self._line_thickness)
-        for pen in (dark_pen, bright_pen):
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            if provisional:
-                pen.setStyle(Qt.PenStyle.DashLine)
+            line_pen.setStyle(Qt.PenStyle.DashLine)
 
         painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(line_pen)
         for name, points in projected_lines.items():
             polygon = self._polygon_from_points(points)
             if polygon.count() < 2:
                 continue
             is_closed = name == "doubles_outer"
-            painter.setPen(dark_pen)
-            self._draw_line_shape(painter, polygon, is_closed)
-            painter.setPen(bright_pen)
             self._draw_line_shape(painter, polygon, is_closed)
         self._draw_corner_handles(painter, court)
         painter.end()
@@ -243,22 +236,22 @@ class CourtLineOverlayWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         scale_x = self._display_rect.width() / max(1, self._source_size.width())
         scale_y = self._display_rect.height() / max(1, self._source_size.height())
-        radius = 7.0
         provisional = bool(court.get("provisional"))
         for index, (x, y) in enumerate(corners):
             label_x = self._display_rect.left() + x * scale_x
             label_y = self._display_rect.top() + y * scale_y
-            center = QPointF(label_x, label_y)
-            if index == self._selected_corner_index:
-                painter.setPen(QPen(QColor("#0F6CBD"), 3.0))
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawEllipse(center, radius + 6.0, radius + 6.0)
-            painter.setPen(QPen(QColor(90, 55, 0) if provisional else QColor(15, 55, 0), 3.0))
-            painter.setBrush(QColor(255, 255, 255, 235))
-            painter.drawEllipse(center, radius + 2.0, radius + 2.0)
-            painter.setPen(QPen(QColor(210, 125, 15) if provisional else QColor(75, 190, 30), 2.0))
-            painter.setBrush(QColor(255, 190, 45, 240) if provisional else QColor(110, 245, 40, 240))
-            painter.drawEllipse(center, radius, radius)
+            selected = index == self._selected_corner_index
+            side = 13.0 if selected else 10.0
+            rect = QRectF(label_x - side / 2.0, label_y - side / 2.0, side, side)
+            if provisional:
+                border = QColor(145, 115, 48, 245)
+                fill = QColor(246, 226, 164, 238)
+            else:
+                border = QColor(73, 103, 37, 245) if selected else QColor(111, 139, 65, 235)
+                fill = QColor(226, 247, 175, 240)
+            painter.setPen(QPen(border, 2.0 if selected else 1.5))
+            painter.setBrush(fill)
+            painter.drawRect(rect)
 
 
 class VideoPlayerWidget(QFrame):

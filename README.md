@@ -58,6 +58,8 @@ pip install -r requirements.txt
 python main.py
 ```
 
+Windows 用户也可以直接双击仓库根目录的 `start_wfbarnet.bat`。脚本会自动定位 Conda，使用项目对应的 `WFBARNet` 环境，并从仓库根目录启动桌面应用。
+
 推荐运行环境：
 
 - Python 3.10

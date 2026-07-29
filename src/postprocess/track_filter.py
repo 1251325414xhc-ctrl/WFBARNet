@@ -77,6 +77,11 @@ class BallTrackFilterConfig:
     court_filter_margin_px: float = 96.0
     court_air_extension_ratio: float = 1.0
     court_air_lateral_expansion_ratio: float = 1.25
+    court_filter_prediction_bypass_enabled: bool = True
+    court_filter_prediction_bypass_px: float = 110.0
+    court_filter_prediction_bypass_min_confidence: float = 0.32
+    reject_relock_enabled: bool = True
+    reject_relock_min_confidence: float = 0.32
     base_gate_px: float = 80.0
     max_gate_px: float = 360.0
     missed_gate_growth_px: float = 55.0
@@ -406,8 +411,13 @@ class BallTrackFilter:
             self._mark_decision("top_exit_enter", "measurement_reverses_after_top_exit", force=True)
             result = self._invisible(track)
         elif self._measurement_is_top_edge_hallucination(measurement, step_dt, frame_size):
-            self._mark_decision("reject", "top_edge_hallucination")
-            result = self._reject(track, step_dt, allow_coast=True, frame_size=frame_size, court_filter=court_filter)
+            if self._reject_path_relock(measurement, float(track.score), step_dt):
+                self._drop_lock()
+                self._mark_decision("relock_accept", "top_edge_relock", force=True)
+                result = self._accept(track, measurement, step_dt, frame_size)
+            else:
+                self._mark_decision("reject", "top_edge_hallucination")
+                result = self._reject(track, step_dt, allow_coast=True, frame_size=frame_size, court_filter=court_filter)
         elif self._literature_prediction_outlier(measurement, float(track.score), step_dt, frame_size):
             self._literature_branch_recovery_remaining = max(
                 1,
@@ -438,6 +448,10 @@ class BallTrackFilter:
                 if self._can_relax_inertia(score, _distance(measurement, predicted)):
                     self._invalidate_parabola_on_y_direction_conflict(measurement, step_dt)
                 self._mark_decision("accept", "person_occlusion_motion_gate", force=True)
+                result = self._accept(track, measurement, step_dt, frame_size)
+            elif self._reject_path_relock(measurement, score, step_dt):
+                self._drop_lock()
+                self._mark_decision("relock_accept", "person_occlusion_relock", force=True)
                 result = self._accept(track, measurement, step_dt, frame_size)
             else:
                 suppress_coast = (
@@ -833,7 +847,11 @@ class BallTrackFilter:
         measurement = self._raw_measurement(track, frame_size)
         if measurement is None:
             return None
-        if court_filter is not None and not self._point_inside_court_region(measurement, court_filter, frame_size):
+        if (
+            court_filter is not None
+            and not self._point_inside_court_region(measurement, court_filter, frame_size)
+            and not self._court_bypass_allowed(measurement, float(track.score))
+        ):
             return None
         return measurement
 
@@ -1427,6 +1445,22 @@ class BallTrackFilter:
             return False
         return True
 
+    def _court_bypass_allowed(self, point: Point, score: float) -> bool:
+        """Keep a court-filtered candidate that closely continues the locked track.
+
+        The court air region is an approximation; high lobs and wide clears can
+        leave it while the ball is still clearly the tracked object. A candidate
+        near the current prediction must not be discarded by the region test.
+        """
+        if not self.config.court_filter_prediction_bypass_enabled:
+            return False
+        if not self._locked or self._last_point is None:
+            return False
+        if score < self.config.court_filter_prediction_bypass_min_confidence:
+            return False
+        predicted = self._predict(self._resolve_dt(None))
+        return _distance(point, predicted) <= float(self.config.court_filter_prediction_bypass_px)
+
     def _point_inside_court_region(
         self,
         point: Point,
@@ -1471,7 +1505,9 @@ class BallTrackFilter:
             measurement = self._raw_measurement(track, frame_size)
             if measurement is None:
                 continue
-            if self._point_inside_court_region(measurement, court_filter, frame_size):
+            if self._point_inside_court_region(
+                measurement, court_filter, frame_size
+            ) or self._court_bypass_allowed(measurement, float(track.score)):
                 selected.append(track)
 
         if selected:
@@ -1863,6 +1899,22 @@ class BallTrackFilter:
         if self._candidate.score >= self.config.strong_relock_confidence:
             return True
         return self._missed_frames >= self.config.relock_after_missed_frames
+
+    def _reject_path_relock(self, measurement: Point, score: float, dt: float) -> bool:
+        """Accumulate relock evidence on special reject paths.
+
+        The top-edge hallucination guard and person-occlusion suppression exist
+        to absorb single-frame artifacts, but they must not starve the relock
+        machinery: a consistent sequence of confident detections that keeps
+        hitting these rejects is usually the real ball seen from a stale lock,
+        and should be allowed to take the track over.
+        """
+        if not self.config.reject_relock_enabled:
+            return False
+        if score < self.config.reject_relock_min_confidence:
+            return False
+        relock = self._update_candidate(measurement, score, dt)
+        return (relock and self._should_relock()) or self._should_fast_relock(score)
 
     def _should_impact_relock(
         self,

@@ -13,6 +13,12 @@ Point = tuple[float, float]
 MEASURED_ACTIONS = {"accept", "bootstrap_accept", "relock_accept"}
 BRANCH_REJECTION_REASONS = {"candidate_failed_motion_gate", "low_confidence_candidate_conflict"}
 SHORT_VISIBILITY_GAP_REASONS = {"missing_or_low_confidence", "low_confidence_candidate_conflict"}
+QUARANTINED_RELOCK_REASONS = {
+    "high_score_fast_relock",
+    "impact_direction_change",
+    "person_occlusion_relock",
+    "top_edge_relock",
+}
 
 
 @dataclass(slots=True)
@@ -113,6 +119,13 @@ class FixedLagTrackConfig:
     occlusion_reset_future_frames: int = 2
     occlusion_reset_future_min_score: float = 0.75
     occlusion_reset_min_coast_frames: int = 3
+    relock_quarantine_future_measurements: int = 2
+    relock_quarantine_min_score: float = 0.55
+    relock_quarantine_min_motion_px: float = 6.0
+    relock_quarantine_min_direct_ratio: float = 0.45
+    relock_quarantine_max_step_px: float = 140.0
+    relock_quarantine_step_px_per_sec: float = 4200.0
+    max_visible_coast_frames: int = 3
 
     @property
     def delay_frames(self) -> int:
@@ -211,6 +224,7 @@ class FixedLagTrackPostProcessor:
 
     def _recompute_pending(self) -> None:
         samples = list(self._samples)
+        self._restore_pending_suppressions(samples)
         self._apply_confirmed_bootstrap(samples)
         self._apply_top_apex_candidate_chain(samples)
         self._apply_confirmed_relock_candidate_chain(samples)
@@ -220,6 +234,8 @@ class FixedLagTrackPostProcessor:
         self._apply_single_frame_smoothing(samples)
         self._apply_relock_backtracking(samples)
         self._apply_future_confirmed_candidate(samples)
+        self._apply_relock_quarantine(samples)
+        self._suppress_long_coast_runs(samples)
 
     def _apply_top_apex_candidate_chain(self, samples: list[_Sample]) -> None:
         for top_index, sample in enumerate(samples):
@@ -1046,6 +1062,120 @@ class FixedLagTrackPostProcessor:
                     for target in prior:
                         target.repaired = _invisible_track(target.baseline)
                         target.source = "fixed_lag_stale_branch_removed"
+
+    def _apply_relock_quarantine(self, samples: list[_Sample]) -> None:
+        suppression_source = "fixed_lag_unconfirmed_relock_removed"
+        anchors = [
+            index
+            for index, sample in enumerate(samples)
+            if sample.reason in QUARANTINED_RELOCK_REASONS
+        ]
+        carried_anchor = next(
+            (
+                index
+                for index, sample in enumerate(samples)
+                if sample.emitted and sample.source == suppression_source
+            ),
+            None,
+        )
+        if carried_anchor is not None and (
+            not anchors or carried_anchor < anchors[0]
+        ):
+            anchors.insert(0, carried_anchor)
+
+        for anchor_pos, anchor_index in enumerate(anchors):
+            branch_end = anchors[anchor_pos + 1] if anchor_pos + 1 < len(anchors) else len(samples)
+            for index in range(anchor_index + 1, branch_end):
+                if samples[index].action == "bootstrap_accept":
+                    branch_end = index
+                    break
+            confirmation_start = self._relock_confirmation_start(
+                samples,
+                anchor_index,
+                branch_end,
+            )
+            if confirmation_start == anchor_index + 1:
+                suppress_until = anchor_index
+            else:
+                suppress_until = confirmation_start if confirmation_start is not None else branch_end
+            for target in samples[anchor_index:suppress_until]:
+                if target.emitted:
+                    continue
+                target.repaired = _invisible_track(target.baseline)
+                target.source = suppression_source
+
+    def _relock_confirmation_start(
+        self,
+        samples: list[_Sample],
+        anchor_index: int,
+        branch_end: int,
+    ) -> int | None:
+        required = max(1, int(self.config.relock_quarantine_future_measurements))
+        anchor = _point(samples[anchor_index].baseline)
+        if anchor is None:
+            return None
+        max_step = min(
+            max(0.0, float(self.config.relock_quarantine_max_step_px)),
+            max(0.0, float(self.config.relock_quarantine_step_px_per_sec))
+            / max(float(self.config.fps), 1.0),
+        )
+        for start in range(anchor_index + 1, branch_end - required + 1):
+            window = samples[start : start + required]
+            if not all(
+                _is_reliable(sample, float(self.config.relock_quarantine_min_score))
+                for sample in window
+            ):
+                continue
+            points = [anchor, *(_point(sample.repaired) for sample in window)]
+            if any(point is None for point in points):
+                continue
+            resolved = [point for point in points if point is not None]
+            first_gap = start - anchor_index
+            step_limits = [max_step * first_gap, *([max_step] * (required - 1))]
+            steps = [
+                _distance(resolved[index], resolved[index + 1])
+                for index in range(len(resolved) - 1)
+            ]
+            if any(step > limit for step, limit in zip(steps, step_limits)):
+                continue
+            path_length = sum(steps)
+            direct_distance = _distance(resolved[0], resolved[-1])
+            if direct_distance < float(self.config.relock_quarantine_min_motion_px):
+                continue
+            if path_length > 0.0 and direct_distance < (
+                path_length * float(self.config.relock_quarantine_min_direct_ratio)
+            ):
+                continue
+            return start
+        return None
+
+    @staticmethod
+    def _restore_pending_suppressions(samples: list[_Sample]) -> None:
+        suppression_sources = {
+            "fixed_lag_long_coast_removed",
+            "fixed_lag_unconfirmed_relock_removed",
+        }
+        for sample in samples:
+            if not sample.emitted and sample.source in suppression_sources:
+                sample.repaired = _copy_track(sample.baseline)
+                sample.source = "causal"
+
+    def _suppress_long_coast_runs(self, samples: list[_Sample]) -> None:
+        max_visible = max(0, int(self.config.max_visible_coast_frames))
+        coast_run = 0
+        for sample in samples:
+            if sample.action != "coast":
+                coast_run = 0
+                continue
+            coast_run += 1
+            if (
+                coast_run <= max_visible
+                or sample.emitted
+                or sample.source not in {"causal", "fixed_lag_long_coast_removed"}
+            ):
+                continue
+            sample.repaired = _invisible_track(sample.baseline)
+            sample.source = "fixed_lag_long_coast_removed"
 
     def _emit_oldest(self) -> FixedLagTrackFrame | None:
         for sample in self._samples:

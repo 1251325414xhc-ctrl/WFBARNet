@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from math import hypot
 from typing import Any, Mapping, Sequence
@@ -109,6 +109,9 @@ class RallyStatsAccumulator:
 
         self._players = {key: _PlayerMotionState() for key in PLAYER_KEYS}
         self._ball_speed = _BallSpeedState()
+        self._ball_speed_history: deque[tuple[int, float]] = deque(
+            maxlen=max(120, int(round(self.fps * 120.0)))
+        )
         self._frame_count = 0
         self._ball_visible_frames = 0
         self._pose_valid_frames = 0
@@ -158,7 +161,15 @@ class RallyStatsAccumulator:
             restarted = self._update_rally_start_candidate(timestamp_ms, bool(ball_visible), ball_xy, ball_score)
             if restarted:
                 self._rally_end_timestamp_ms = None
+        previous_speed_samples = self._ball_speed.speed_samples
         self._update_ball_speed(timestamp_ms, ball_court_xy if ball_visible else None)
+        if (
+            self._ball_speed.current_valid
+            and self._ball_speed.speed_samples > previous_speed_samples
+        ):
+            self._ball_speed_history.append(
+                (timestamp_ms, self._ball_speed.current_speed_mps * 3.6)
+            )
 
         valid_points = self._clean_player_points(player_points)
         self._pose_valid_frames += int(bool(valid_points))
@@ -176,6 +187,25 @@ class RallyStatsAccumulator:
                 state.moving = False
                 state.high_intensity = False
                 state.current_continuous_m = 0.0
+
+    def peak_ball_speed_near(
+        self,
+        timestamp_ms: int,
+        *,
+        window_ms: int = 500,
+    ) -> float | None:
+        if not self._ball_speed_history:
+            return None
+        target = max(0, int(timestamp_ms))
+        half_window_ms = max(0, int(window_ms)) / 2.0
+        speeds = [
+            speed_kmh
+            for sample_timestamp, speed_kmh in self._ball_speed_history
+            if abs(sample_timestamp - target) <= half_window_ms
+        ]
+        if not speeds:
+            return None
+        return float(max(speeds))
 
     def add_trajectory_event(
         self,
@@ -212,6 +242,9 @@ class RallyStatsAccumulator:
             already_registered = bool(hit.get("_event_registered"))
             hit["event_confidence"] = confidence
             hit["source"] = "trajectory"
+            speed_kmh = self._safe_float(event.get("speed_kmh", 0.0))
+            if speed_kmh > 0.0:
+                hit["speed_kmh"] = speed_kmh
             if ball_court_xy is not None:
                 hit["court_xy"] = self._clean_point(ball_court_xy)
             if not already_registered:
@@ -554,6 +587,7 @@ class RallyStatsAccumulator:
             "zone": "",
             "confidence": 0.0,
             "event_confidence": 0.0,
+            "speed_kmh": 0.0,
             "court_xy": None,
             "passive": False,
         }

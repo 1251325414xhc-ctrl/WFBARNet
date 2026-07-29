@@ -30,27 +30,28 @@ DEFAULT_SKELETON = [
     (2, 4),
 ]
 BALL_COLOR = (0, 0, 255)
-TRAIL_COLOR = (0, 220, 255)
-HIT_COLOR = (0, 0, 255)
+TRAIL_OLD_COLOR = (255, 155, 35)
+TRAIL_NEW_COLOR = (0, 225, 255)
+HIT_COLOR = (65, 215, 80)
+POSE_RECALL_HIT_COLOR = (0, 165, 255)
 LANDING_COLOR = (0, 255, 0)
 OUT_OF_FRAME_COLOR = (255, 0, 255)
 MARKER_OUTLINE_COLOR = (255, 255, 255)
 
 _TrailPoint = tuple[float, int, float, float, int]
+_EventMarker = tuple[float, float, float, str, str, float | None]
 
 
 @dataclass
 class TrackTrailRenderer:
     fps: float = 25.0
     history_seconds: float = 0.5
-    current_radius: int = 8
-    trail_radius: int = 4
     trail_break_threshold_px: float = 80.0
     segment_gap_seconds: float = 0.16
-    event_marker_seconds: float = 2.0
-    event_marker_radius: int = 8
+    event_marker_seconds: float = 1.2
+    event_marker_radius: int = 26
     _points: deque[_TrailPoint] = field(default_factory=deque)
-    _event_markers: deque[tuple[float, float, float, str]] = field(default_factory=deque)
+    _event_markers: deque[_EventMarker] = field(default_factory=deque)
     _segment_id: int = 0
     _last_visible_timestamp_s: float | None = None
 
@@ -82,8 +83,7 @@ class TrackTrailRenderer:
         timestamp_s = self.update_track_history(result, timestamp_ms=timestamp_ms)
         self.add_trajectory_event(trajectory_event)
         self._draw_trail(canvas, timestamp_s)
-        self._draw_current(canvas, result.track)
-        self._draw_event_markers(canvas)
+        self._draw_event_markers(canvas, timestamp_s)
         return canvas
 
     def update_track_history(
@@ -129,7 +129,16 @@ class TrackTrailRenderer:
         except (TypeError, ValueError):
             timestamp_ms = 0
         timestamp_s = max(0.0, float(timestamp_ms) / 1000.0)
-        self._event_markers.append((timestamp_s, x, y, event_type))
+        rule = str(event.get("rule", ""))
+        speed_kmh = None
+        if event_type == "hit":
+            try:
+                speed_value = float(event.get("speed_kmh", 0.0))
+            except (TypeError, ValueError):
+                speed_value = 0.0
+            if np.isfinite(speed_value) and speed_value > 0.0:
+                speed_kmh = speed_value
+        self._event_markers.append((timestamp_s, x, y, event_type, rule, speed_kmh))
 
     def _timestamp_seconds(self, frame_id: int, timestamp_ms: int | None) -> float:
         if timestamp_ms is not None:
@@ -155,45 +164,31 @@ class TrackTrailRenderer:
             if hypot(x - prev_x, y - prev_y) > self.trail_break_threshold_px:
                 continue
             age = max(0.0, timestamp_s - point_time)
-            fade = max(0.15, 1.0 - age / max(self.history_seconds, 1e-6))
-            color = tuple(int(channel * fade) for channel in TRAIL_COLOR)
+            freshness = max(0.0, 1.0 - age / max(self.history_seconds, 1e-6))
+            color = _gradient_color(TRAIL_OLD_COLOR, TRAIL_NEW_COLOR, freshness)
             cv2.line(
                 canvas,
                 (int(round(prev_x)), int(round(prev_y))),
                 (int(round(x)), int(round(y))),
                 color,
-                2,
+                max(1, int(round(1.0 + freshness * 2.0))),
+                cv2.LINE_AA,
             )
 
-        for point_time, _frame_id, x, y, _segment_id in self._points:
-            age = max(0.0, timestamp_s - point_time)
-            fade = max(0.15, 1.0 - age / max(self.history_seconds, 1e-6))
-            radius = max(2, int(round(self.trail_radius + fade * 2)))
-            thickness = 1 if fade < 0.55 else 2
-            color = tuple(int(channel * fade) for channel in TRAIL_COLOR)
-            cv2.circle(canvas, (int(round(x)), int(round(y))), radius, color, thickness)
+    def _draw_event_markers(self, canvas: np.ndarray, timestamp_s: float) -> None:
+        for event_time, x, y, event_type, rule, speed_kmh in self._event_markers:
+            age = max(0.0, timestamp_s - event_time)
+            self._draw_event_marker(canvas, (x, y), event_type, rule, age, speed_kmh)
 
-    def _draw_current(self, canvas: np.ndarray, track: TrackResult) -> None:
-        if not track.visible:
-            return
-        x, y = map(int, map(round, track.ball_xy))
-        cv2.circle(canvas, (x, y), self.current_radius, BALL_COLOR, 2)
-        cv2.circle(canvas, (x, y), self.current_radius + 6, TRAIL_COLOR, 1)
-        cv2.putText(
-            canvas,
-            f"{track.score:.2f}",
-            (x + 10, y - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            BALL_COLOR,
-            1,
-        )
-
-    def _draw_event_markers(self, canvas: np.ndarray) -> None:
-        for _, x, y, event_type in self._event_markers:
-            self._draw_event_marker(canvas, (x, y), event_type)
-
-    def _draw_event_marker(self, canvas: np.ndarray, point: tuple[float, float], event_type: str) -> None:
+    def _draw_event_marker(
+        self,
+        canvas: np.ndarray,
+        point: tuple[float, float],
+        event_type: str,
+        rule: str,
+        age: float,
+        speed_kmh: float | None,
+    ) -> None:
         x, y = self._marker_point(canvas, point)
         radius = max(3, int(self.event_marker_radius))
         if event_type == "landing":
@@ -209,8 +204,95 @@ class TrackTrailRenderer:
             cv2.line(canvas, (x - radius, y + radius), (x + radius, y - radius), OUT_OF_FRAME_COLOR, 3)
             cv2.circle(canvas, (x, y), radius + 3, MARKER_OUTLINE_COLOR, 1)
             return
-        cv2.circle(canvas, (x, y), radius, HIT_COLOR, -1)
-        cv2.circle(canvas, (x, y), radius + 2, MARKER_OUTLINE_COLOR, 1)
+        color = POSE_RECALL_HIT_COLOR if rule == "pose_recall" else HIT_COLOR
+        freshness = max(0.0, 1.0 - age / max(self.event_marker_seconds, 1e-6))
+        ring_radius = radius + int(round(5.0 * freshness))
+        glow = canvas.copy()
+        cv2.circle(glow, (x, y), ring_radius + 7, color, 7, cv2.LINE_AA)
+        cv2.addWeighted(glow, 0.24, canvas, 0.76, 0.0, canvas)
+        cv2.circle(canvas, (x, y), ring_radius + 2, MARKER_OUTLINE_COLOR, 5, cv2.LINE_AA)
+        cv2.circle(canvas, (x, y), ring_radius, color, 3, cv2.LINE_AA)
+        if speed_kmh is not None:
+            self._draw_hit_speed_label(canvas, (x, y), ring_radius, speed_kmh, color)
+
+    def _draw_hit_speed_label(
+        self,
+        canvas: np.ndarray,
+        point: tuple[int, int],
+        ring_radius: int,
+        speed_kmh: float,
+        accent_color: tuple[int, int, int],
+    ) -> None:
+        height, width = canvas.shape[:2]
+        if height <= 0 or width <= 0:
+            return
+
+        label = f"{speed_kmh:.0f} km/h"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = max(0.46, min(0.68, height / 1080.0 * 0.68))
+        thickness = 2 if height >= 720 else 1
+        pad_x = max(7, int(round(font_scale * 13)))
+        pad_y = max(5, int(round(font_scale * 9)))
+        margin = 4
+
+        (text_width, text_height), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+        max_text_width = max(1, width - (margin + pad_x) * 2)
+        if text_width > max_text_width:
+            font_scale = max(0.30, font_scale * max_text_width / text_width)
+            (text_width, text_height), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+
+        box_width = min(width - margin * 2, text_width + pad_x * 2)
+        box_height = min(height - margin * 2, text_height + baseline + pad_y * 2)
+        if box_width <= 0 or box_height <= 0:
+            return
+
+        x, y = point
+        marker_extent = ring_radius + 7
+        gap = max(8, int(round(font_scale * 16)))
+        right_left = x + marker_extent + gap
+        if right_left + box_width <= width - margin:
+            left = right_left
+            connector_start = (x + marker_extent, y)
+            connector_on_left = True
+        else:
+            left = x - marker_extent - gap - box_width
+            connector_start = (x - marker_extent, y)
+            connector_on_left = False
+        left = max(margin, min(width - margin - box_width, left))
+        top = max(margin, min(height - margin - box_height, y - box_height // 2))
+        right = left + box_width
+        bottom = top + box_height
+
+        connector_y = max(top, min(bottom, y))
+        connector_end = (left if connector_on_left else right, connector_y)
+        cv2.line(canvas, connector_start, connector_end, accent_color, 1, cv2.LINE_AA)
+
+        shadow = canvas.copy()
+        cv2.rectangle(
+            shadow,
+            (min(width - 1, left + 2), min(height - 1, top + 2)),
+            (min(width - 1, right + 2), min(height - 1, bottom + 2)),
+            (0, 0, 0),
+            -1,
+        )
+        cv2.addWeighted(shadow, 0.28, canvas, 0.72, 0.0, canvas)
+
+        panel = canvas.copy()
+        cv2.rectangle(panel, (left, top), (right, bottom), (18, 24, 28), -1)
+        cv2.addWeighted(panel, 0.88, canvas, 0.12, 0.0, canvas)
+        cv2.rectangle(canvas, (left, top), (right, bottom), accent_color, 2, cv2.LINE_AA)
+        text_x = left + max(1, (box_width - text_width) // 2)
+        text_y = top + max(text_height, (box_height + text_height - baseline) // 2)
+        cv2.putText(
+            canvas,
+            label,
+            (text_x, text_y),
+            font,
+            font_scale,
+            MARKER_OUTLINE_COLOR,
+            thickness,
+            cv2.LINE_AA,
+        )
 
     def _marker_point(self, canvas: np.ndarray, point: tuple[float, float]) -> tuple[int, int]:
         height, width = canvas.shape[:2]
@@ -221,6 +303,15 @@ class TrackTrailRenderer:
         if height > 0:
             y = max(0, min(height - 1, y))
         return x, y
+
+
+def _gradient_color(
+    start: tuple[int, int, int],
+    end: tuple[int, int, int],
+    ratio: float,
+) -> tuple[int, int, int]:
+    amount = max(0.0, min(1.0, float(ratio)))
+    return tuple(int(round(left + (right - left) * amount)) for left, right in zip(start, end))
 
 
 def _draw_pose(canvas: np.ndarray, result: FrameResult) -> None:
