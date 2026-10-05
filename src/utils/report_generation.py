@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import shutil
@@ -8,8 +9,13 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
-from urllib import error, request
+from urllib import error, parse, request
 
+from src.utils.report_export import (
+    ReportExportTarget,
+    export_report_image,
+    write_report_sidecar,
+)
 from src.utils.user_report import build_user_report_data_from_rally_record, render_user_report_html as render_standalone_user_report_html
 
 
@@ -27,6 +33,131 @@ TABLER_REPORT_OUTPUT_PATH = TABLER_REPORT_DIST_DIR / "index.html"
 
 class ReportGenerationError(RuntimeError):
     """Raised when a report cannot be generated locally or through an API."""
+
+
+# --- API request sizing --------------------------------------------------
+# Local models run with a small context window. Ollama's default ``num_ctx``
+# has been 2048 and later 4096; llama.cpp/others default similarly. **Anything
+# that does not fit is dropped silently** — and because the per-hit event list
+# dominates the request (measured: 72.5% of the record, ~345 chars per hit),
+# a long video pushes the *system prompt* or the aggregate summary out of the
+# window and the model then writes a report about data it never saw.
+#
+# Measured growth with the shipped rally record:
+#     20s /  23 hits ->  10.2 KB  ~2.7k tokens   (already over a 2048 window)
+#     60s /  70 hits ->  24.4 KB  ~6.6k tokens
+#    180s / 210 hits ->  67.5 KB  ~18.3k tokens
+#
+# So the request is compacted to fit the 4096 floor with room for the reply.
+_API_RECORD_CHAR_BUDGET = 8000
+_MAX_API_EVENTS = 80
+# Bounded so a reasoning model cannot spend the whole context on deliberation.
+_API_MAX_OUTPUT_TOKENS = 1024
+
+# Reasoning models (qwen3 and friends) wrap chain-of-thought in think blocks.
+# The delimiters differ by model family, so accept both spellings:
+#   * qwen3 uses the dedicated special tokens ＜think＞ … ＜｜end▁of▁thinking｜＞
+#   * most others (DeepSeek-R1 style, many fine-tunes) use ＜think＞ … ＜/think＞
+_THINK_PATTERNS = (
+    re.compile(r"(?is)<think[^>]*>.*?<｜end▁of▁thinking｜>"),
+    re.compile(r"(?is)<think(?:ing)?>.*?</think(?:ing)?>"),
+    # A truncated stream can leave an unterminated block; drop the remainder
+    # rather than letting raw deliberation reach the report body.
+    re.compile(r"(?is)<think(?:ing)?>.*$"),
+)
+
+
+def _strip_reasoning(text: str) -> str:
+    """Remove chain-of-thought deliberation from model output.
+
+    qwen3 emits it by default. Leaving it in would put the model's raw
+    reasoning into the report body, and an unterminated block can also swallow
+    the answer (or hide a JSON body from the parser).
+    """
+    cleaned = text or ""
+    for pattern in _THINK_PATTERNS:
+        cleaned = pattern.sub("", cleaned)
+    return cleaned.strip()
+
+
+def _compact_event(item: object) -> dict[str, Any]:
+    """One per-hit row reduced to short keys and rounded numbers."""
+    row = _mapping(item)
+    out: dict[str, Any] = {}
+    if row.get("timestamp_ms") is not None:
+        out["t"] = round(_float(row.get("timestamp_ms")) / 1000.0, 2)
+    for source, target in (("player", "p"), ("stroke", "s"), ("zone", "z")):
+        value = row.get(source)
+        if value not in (None, ""):
+            text = str(value)
+            if text.lower() not in ("unknown", "none"):
+                out[target] = text
+    if row.get("confidence") is not None:
+        out["c"] = round(_float(row.get("confidence")), 2)
+    if row.get("speed_kmh") is not None:
+        out["v"] = round(_float(row.get("speed_kmh")), 1)
+    return out
+
+
+def _downsample(items: list[Any], limit: int) -> tuple[list[Any], int]:
+    """Evenly sample ``items`` down to ``limit``, preserving order.
+
+    A uniform sample keeps the stroke/zone *distribution* intact, which is what
+    the report analyses. Taking only the tail would bias every conclusion
+    towards the end of the rally.
+    """
+    if limit <= 0 or len(items) <= limit:
+        return list(items), 0
+    step = len(items) / float(limit)
+    picked = [items[min(len(items) - 1, int(index * step))] for index in range(limit)]
+    return picked, len(items) - len(picked)
+
+
+def compact_rally_record_for_api(
+    record: Mapping[str, Any],
+    *,
+    char_budget: int = _API_RECORD_CHAR_BUDGET,
+) -> dict[str, Any]:
+    """Shrink a rally record so a small local context window can hold it.
+
+    The aggregate ``summary`` and ``details.players`` are always kept in full —
+    they carry the numbers every conclusion is drawn from. Only the per-hit
+    event list is condensed, capped, and (as a last resort) dropped, with an
+    explicit note so the model knows the data was trimmed rather than absent.
+    """
+    out: dict[str, Any] = dict(record)
+    details = dict(_mapping(out.get("details")))
+    hits = details.pop("hits", None)
+    out["details"] = details
+
+    if isinstance(hits, list) and hits:
+        rows = [row for row in (_compact_event(item) for item in hits) if row]
+        total = len(rows)
+        kept_rows, _ = _downsample(rows, _MAX_API_EVENTS)
+        details["events"] = kept_rows
+        details["events_info"] = {
+            "total": total,
+            "included": len(kept_rows),
+            "sampled": len(kept_rows) < total,
+        }
+
+    def _size(payload: Mapping[str, Any]) -> int:
+        return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+    if _size(out) > char_budget and "events" in details:
+        total = details.get("events_info", {}).get("total", 0)
+        details.pop("events", None)
+        details["events_info"] = {
+            "total": total,
+            "included": 0,
+            "note": "事件逐条列表过大已省略，请仅依据 summary 与 players 的汇总指标分析。",
+        }
+
+    # Even without events the record can be large (e.g. many players); say so
+    # rather than letting the server truncate silently.
+    if _size(out) > char_budget:
+        out["truncated"] = True
+    return out
 
 
 class ReportApiTransport(Protocol):
@@ -89,7 +220,12 @@ class ReportGenerationRequest:
         )
 
     def to_payload(self) -> dict[str, Any]:
-        """Return the JSON-serializable interface payload for API transmission."""
+        """Return the JSON-serializable interface payload for API transmission.
+
+        The rally record is compacted (see :func:`compact_rally_record_for_api`)
+        so the request fits a small local context window instead of being
+        silently truncated by the server.
+        """
         return {
             "interface_version": REPORT_INTERFACE_VERSION,
             "task": "badminton_report_generation",
@@ -102,7 +238,7 @@ class ReportGenerationRequest:
                 "athlete_name": self.athlete_name,
                 "user_player": self.user_player,
                 "video_name": self.video_name,
-                "rally_record": self.rally_record,
+                "rally_record": compact_rally_record_for_api(self.rally_record),
             },
         }
 
@@ -192,17 +328,33 @@ class OpenAICompatibleReportApiClient(ReportApiClient):
                 {
                     "role": "system",
                     "content": (
-                        "你是羽毛球训练报告生成模型。请基于结构化数据输出中文训练复盘，"
-                        "优先返回 JSON 对象，字段包含 report_text；如能生成完整可视化数据，"
-                        "可附带 report_data 或 html。"
+                        "你是严谨的羽毛球训练报告分析模型。只能使用用户提供的结构化数据，"
+                        "不得补造击球类型、落点位置、失误原因、技术动作或比分；字段缺失时必须"
+                        "明确写“数据不足，无法判断”。每条结论和建议都应能对应到输入中的实际"
+                        "指标，区分事实、计算结果和建议，不输出思考过程。请输出中文训练复盘，"
+                        "优先返回 JSON 对象，字段包含 report_text；如能基于现有数据生成完整"
+                        "可视化数据，可附带 report_data 或 html。\n"
+                        "直接给出最终结论，不要展开推理。\n"
+                        "/no_think"
                     ),
                 },
                 {
                     "role": "user",
-                    "content": json.dumps(generation_request.to_payload(), ensure_ascii=False, indent=2),
+                    # Compact, not indented: pretty-printing this payload with
+                    # indent=2 inflated it ~2.4x (measured 4.2 KB -> 8.6 KB,
+                    # ~1100 wasted tokens) for whitespace the model never needs.
+                    "content": json.dumps(
+                        generation_request.to_payload(),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
                 },
             ],
             "temperature": 0.2,
+            # Bounded explicitly: local servers otherwise pick their own limit,
+            # and a reasoning model can spend the entire window on deliberation
+            # and return a truncated report.
+            "max_tokens": _API_MAX_OUTPUT_TOKENS,
         }
         headers = {
             "Content-Type": "application/json; charset=utf-8",
@@ -217,6 +369,12 @@ class OpenAICompatibleReportApiClient(ReportApiClient):
         if parsed is not None:
             parsed.setdefault("provider", "openai-compatible")
             parsed.setdefault("raw_response", raw)
+            # Models often follow "return JSON" loosely. If the object carries
+            # neither the prose field we asked for nor replacement data, keep
+            # whatever they wrote rather than silently discarding the analysis.
+            has_text = bool(str(parsed.get("report_text") or "").strip())
+            if not has_text and not parsed.get("report_data"):
+                parsed["report_text"] = content
             return parsed
         return {
             "status": "ok",
@@ -294,6 +452,32 @@ class ReportGenerationService:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(response.report_text, encoding="utf-8")
 
+    def export_to_target(self, response: ReportGenerationResponse, target: ReportExportTarget) -> Path:
+        """Write a report (and its JSON sidecar) to a resolved export target.
+
+        PDF/PNG need a GPU-backed render process, so they are produced in an
+        isolated child process; the HTML source is always written regardless.
+        """
+        path = target.path
+        html_path = path.with_suffix(".html") if target.format in ("pdf", "png") else path
+        self.export_html(response, html_path)
+
+        if target.format in ("pdf", "png"):
+            export_report_image(html_path, path, fmt=target.format, landscape=True)
+        else:
+            path = html_path
+
+        payload = {
+            "report_id": response.report_id,
+            "status": response.status,
+            "provider": response.provider,
+            "report_text": response.report_text,
+            "report_data": response.report_data,
+            "raw_response": response.raw_response,
+        }
+        write_report_sidecar(target, payload)
+        return path
+
 
 def generate_report_from_rally_record(
     rally_record: Mapping[str, Any],
@@ -348,6 +532,8 @@ def render_tabler_report_html(report_data: Mapping[str, Any]) -> str:
     )
 
     zones = _zone_percentages(zone_distribution)
+    user_player = _mapping(players.get("user"))
+    opponent_player = _mapping(players.get("opponent"))
     fields = {
         "title": title,
         "subtitle": subtitle,
@@ -365,13 +551,29 @@ def render_tabler_report_html(report_data: Mapping[str, Any]) -> str:
         "front_zone": _fmt_percent(zones.get("front", 0.0)),
         "mid_zone": _fmt_percent(zones.get("mid", 0.0)),
         "back_zone": _fmt_percent(zones.get("back", 0.0)),
+        "front_zone_bar": _bar_html(zones.get("front", 0.0)),
+        "mid_zone_bar": _bar_html(zones.get("mid", 0.0)),
+        "back_zone_bar": _bar_html(zones.get("back", 0.0)),
         "ai_summary": _summary_html(summary),
+        "ai_highlights": _render_highlights(report_data),
+        "analysis_source": _analysis_source_badge(report_data),
+        "analysis_error": _analysis_error_note(report_data),
         "bottom_distance": _fmt_meters(user.get("distance_m")),
         "top_distance": _fmt_meters(opponent.get("distance_m")),
+        "bottom_label": f"{_player_label(user_player, '下方')}跑动",
+        "top_label": f"{_player_label(opponent_player, '上方')}跑动",
+        "avg_speed": _fmt_speed(_player_avg_speed(user_player)),
+        "avg_speed_bar": _bar_html(_speed_ratio(user_player)),
         "track_visible_rate": _fmt_percent(_find_reliability(reliability, ("球", "track", "visible"))),
         "pose_valid_rate": _fmt_percent(_find_reliability(reliability, ("姿态", "pose"))),
-        "court_status": "manual",
-        "bst_coverage": _fmt_percent(_avg_reliability(reliability)),
+        "court_status": _court_status_text(report_data),
+        "bst_coverage": _bst_coverage_text(report_data),
+        "court_heat": _render_court_heat(report_data.get("court_heat")),
+        "stroke_rows": _render_stroke_rows(report_data.get("stroke_distribution")),
+        "event_timeline": _render_event_timeline(report_data.get("events")),
+        "metric_rows": _render_metric_rows(report_data, reliability),
+        "training_rows": _render_training_rows(report_data.get("training_plan")),
+        "report_disclaimer": escape(str(report_data.get("disclaimer") or "")),
         "notes": _notes_text(report_data),
         "rally_rows": _render_temp_rally_rows(template_data.get("rallies")),
         "event_rows": _render_temp_event_rows(template_data.get("events")),
@@ -471,6 +673,39 @@ def _tabler_subtitle(meta: Mapping[str, Any], summary: Mapping[str, Any]) -> str
     return " · ".join(part for part in parts if part)
 
 
+def _analysis_source_badge(report_data: Mapping[str, Any]) -> str:
+    """A small badge naming how the narrative analysis was actually produced.
+
+    Without this a local, rule-based report is visually identical to one whose
+    prose came from the configured LLM — the card is even titled "AI 复盘摘要".
+    A user who configured a model and silently fell back then reasonably
+    concludes the report ignores the video content.
+    """
+    source = str(report_data.get("analysis_source") or "local").strip().lower()
+    if source == "llm":
+        return (
+            '<span class="badge bg-green-lt ms-1" '
+            'title="本报告的结论文字由已配置的大模型分析生成">大模型分析</span>'
+        )
+    return (
+        '<span class="badge bg-secondary-lt ms-1" '
+        'title="未使用大模型；结论由本地规则依据本视频的统计数据推导">本地规则分析</span>'
+    )
+
+
+def _analysis_error_note(report_data: Mapping[str, Any]) -> str:
+    """Surface an LLM failure inside the report instead of only in the log."""
+    message = str(report_data.get("analysis_error") or "").strip()
+    if not message:
+        return ""
+    return (
+        '<div class="alert alert-warning py-2 px-3 small" role="alert">'
+        "<strong>大模型分析未生效</strong>，本报告为本地规则分析。"
+        f"原因：{escape(message)}"
+        "</div>"
+    )
+
+
 def _notes_text(report_data: Mapping[str, Any]) -> str:
     summary = _mapping(report_data.get("summary"))
     takeaways = [str(item) for item in _sequence(summary.get("takeaways")) if str(item).strip()]
@@ -555,6 +790,276 @@ def _render_temp_event_rows(value: object) -> str:
     if not rows:
         return '<div class="list-group-item text-secondary">暂无事件数据。</div>'
     return "".join(rows)
+
+
+def _bar_html(ratio: float, *, color: str = "") -> str:
+    """Render an inline bar-track block from a 0..1 ratio."""
+    width = max(0.0, min(1.0, float(ratio))) * 100.0
+    style = f"width: {width:.1f}%"
+    if color:
+        style += f"; background: {color}"
+    return f'<div class="bar-fill" style="{style}"></div>'
+
+
+def _player_label(player: Mapping[str, Any], fallback: str) -> str:
+    return str(player.get("label") or fallback)
+
+
+def _player_avg_speed(player: Mapping[str, Any]) -> float:
+    return _float(player.get("avg_speed_mps"))
+
+
+def _speed_ratio(player: Mapping[str, Any]) -> float:
+    """Map average speed onto a 0..1 bar, saturating at a fast 4 m/s."""
+    return _clamp(_player_avg_speed(player) / 4.0)
+
+
+def _fmt_speed(value: object) -> str:
+    return f"{_float(value):.2f} m/s"
+
+
+def _clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
+    if value != value:  # NaN
+        return lower
+    return max(lower, min(upper, value))
+
+
+def _render_highlights(report_data: Mapping[str, Any]) -> str:
+    """Render 优势/风险/训练 highlight rows derived from real data."""
+    summary = _mapping(report_data.get("summary"))
+    improvements = [_mapping(item) for item in _sequence(report_data.get("improvements"))]
+    dimensions = [_mapping(item) for item in _sequence(report_data.get("dimensions"))]
+    reliability = list(_sequence(report_data.get("reliability")))
+
+    scored = [item for item in dimensions if _float(item.get("score")) > 0]
+    best = max(scored, key=lambda item: _float(item.get("score")), default=None)
+    worst = min(scored, key=lambda item: _float(item.get("score")), default=None)
+
+    rows: list[tuple[str, str, str]] = []
+    if best is not None:
+        rows.append(
+            (
+                "优势",
+                "bg-green-lt text-green",
+                f"{str(best.get('label') or '能力项')} {_float(best.get('score')):.0f} 分，为本次表现最好的维度。",
+            )
+        )
+    low_reliability = [
+        str(_mapping(item).get("label") or "")
+        for item in reliability
+        if 0.0 < _float(_mapping(item).get("value")) < 0.8
+    ]
+    if worst is not None:
+        detail = f"{str(worst.get('label') or '能力项')} {_float(worst.get('score')):.0f} 分"
+        if low_reliability:
+            detail += f"，且 {('、'.join(low_reliability[:2]))} 偏低，相关结论建议人工复核"
+        rows.append(("风险", "bg-yellow-lt text-yellow", detail + "。"))
+    elif low_reliability:
+        rows.append(("风险", "bg-yellow-lt text-yellow", f"{'、'.join(low_reliability[:2])} 偏低，相关结论建议人工复核。"))
+
+    training = [_mapping(item) for item in _sequence(report_data.get("training_plan"))]
+    if training:
+        titles = "、".join(str(item.get("title") or "") for item in training[:2] if item.get("title"))
+        if titles:
+            rows.append(("训练", "bg-blue-lt text-blue", f"建议优先安排：{titles}。"))
+    elif improvements:
+        titles = "、".join(str(item.get("title") or "") for item in improvements[:2] if item.get("title"))
+        if titles:
+            rows.append(("训练", "bg-blue-lt text-blue", f"建议优先改进：{titles}。"))
+
+    if not rows:
+        level_note = str(summary.get("level_note") or "").strip()
+        if level_note:
+            rows.append(("结论", "bg-blue-lt text-blue", level_note))
+        else:
+            return '<div class="text-secondary">数据不足，无法生成分项结论。</div>'
+
+    blocks = [
+        '<div class="d-flex align-items-start gap-3 mb-3">'
+        f'<span class="badge {badge}">{escape(str(label))}</span>'
+        f"<div>{escape(detail)}</div>"
+        "</div>"
+        for label, badge, detail in rows
+    ]
+    return "".join(blocks)
+
+
+# Tabler court-svg viewBox is 0 0 244 536; map report heat points into it.
+_COURT_VIEWBOX_WIDTH = 244.0
+_COURT_VIEWBOX_HEIGHT = 536.0
+_COURT_ASPECT = 1340.0 / 610.0
+
+
+def _render_court_heat(value: object) -> str:
+    points = [_mapping(item) for item in _sequence(value)]
+    rendered: list[str] = []
+    for item in points:
+        x = _float(item.get("x"))
+        y = _float(item.get("y"))
+        radius = _float(item.get("radius"))
+        intensity = _clamp(_float(item.get("intensity")), 0.0, 1.0)
+        if radius <= 0:
+            continue
+        # Report heat points use a 610x1340 court; scale into the 244x536 viewBox.
+        cx = _clamp(x / 610.0, 0.0, 1.0) * _COURT_VIEWBOX_WIDTH
+        cy = _clamp(y / 1340.0, 0.0, 1.0) * _COURT_VIEWBOX_HEIGHT
+        r = _clamp(radius / 610.0) * _COURT_VIEWBOX_WIDTH
+        opacity = 0.18 + intensity * 0.5
+        rendered.append(
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="#ffdd57" fill-opacity="{opacity:.2f}">'
+            f"<title>{escape(str(item.get('label') or '热区'))}</title>"
+            "</circle>"
+        )
+    return "".join(rendered)
+
+
+def _render_stroke_rows(value: object) -> str:
+    strokes = [_mapping(item) for item in _sequence(value)]
+    total = sum(_float(item.get("value")) for item in strokes)
+    if not strokes or total <= 0:
+        return '<div class="text-secondary">数据不足，无法判断击球类型分布。</div>'
+    rows = []
+    for item in strokes:
+        count = _float(item.get("value"))
+        ratio = count / total
+        rows.append(
+            '<div class="mb-3">'
+            '<div class="d-flex justify-content-between mb-1">'
+            f"<span>{escape(str(item.get('name') or '未知类型'))}</span>"
+            f"<span>{escape(f'{int(count)} 次 · {ratio * 100:.0f}%')}</span>"
+            "</div>"
+            f'<div class="bar-track">{_bar_html(ratio)}</div>'
+            "</div>"
+        )
+    return "".join(rows)
+
+
+def _render_event_timeline(value: object) -> str:
+    events = [_mapping(item) for item in _sequence(value)]
+    if not events:
+        return '<div class="text-secondary">数据不足，无法判断关键事件。</div>'
+    items = []
+    for event in events:
+        time_text = str(event.get("time") or "0.00s")
+        stroke = str(event.get("stroke") or "击球")
+        player = str(event.get("player_label") or "")
+        zone = str(event.get("zone_label") or "")
+        confidence = _float(event.get("confidence"))
+        headline = escape(" · ".join(part for part in (time_text, player, zone, stroke) if part))
+        note_parts = []
+        if confidence > 0:
+            note_parts.append(f"识别置信度 {confidence * 100:.0f}%")
+        if event.get("passive"):
+            note_parts.append("被动球")
+        note = escape("，".join(note_parts)) if note_parts else "由轨迹事件与姿态模型联合判定"
+        margin = "" if len(items) == len(events) - 1 else " mb-3"
+        items.append(
+            f'<div class="timeline-item{margin}">'
+            f'<div class="fw-bold">{headline}</div>'
+            f'<div class="text-secondary">{note}</div>'
+            "</div>"
+        )
+    return "".join(items)
+
+
+_METRIC_NOTES = {
+    "ball_visible_rate": ("TrackNet V3", "球点可见率", "短时丢失由滤波补偿，长丢失片段应标为低可信。"),
+    "pose_valid_rate": ("Pose", "姿态有效帧", "远端球员丢失会影响移动距离和动作识别覆盖。"),
+    "court_valid_rate": ("Court", "场地映射", "四角点标定后用于热区和距离换算。"),
+    "avg_ball_confidence": ("BST", "动作识别置信度", "模型输出需结合姿态质量和关键点格式一致性解释。"),
+}
+
+
+def _render_metric_rows(report_data: Mapping[str, Any], reliability: list[Any]) -> str:
+    summary = _mapping(report_data.get("summary"))
+    rows: list[str] = []
+    for item in reliability:
+        metric = _mapping(item)
+        label = str(metric.get("label") or "")
+        value = _float(metric.get("value"))
+        module, name, note = _metric_note_for(label)
+        note = str(metric.get("note") or "").strip() or note
+        level = "不足" if value < 0.5 else ("偏低" if value < 0.8 else "良好")
+        rows.append(
+            "<tr>"
+            f"<td>{escape(module)}</td>"
+            f"<td>{escape(name)}</td>"
+            f"<td>{escape(level)}</td>"
+            f"<td>{escape(note)}</td>"
+            "</tr>"
+        )
+
+    raw_reliability = _mapping(summary.get("data_reliability"))
+    for key, (module, name, note) in _METRIC_NOTES.items():
+        if key in raw_reliability:
+            continue
+        rows.append(
+            "<tr>"
+            f"<td>{escape(module)}</td>"
+            f"<td>{escape(name)}</td>"
+            '<td class="text-secondary">缺失</td>'
+            f"<td>{escape(note)}</td>"
+            "</tr>"
+        )
+
+    if not rows:
+        return '<tr><td colspan="4" class="text-secondary">数据不足，无法判断指标明细。</td></tr>'
+    return "".join(rows)
+
+
+def _metric_note_for(label: str) -> tuple[str, str, str]:
+    normalized = label.lower()
+    for key, (module, name, note) in _METRIC_NOTES.items():
+        if key.lower() in normalized or normalized in key.lower():
+            return module, name, note
+    return "Other", label or "未命名指标", "由报告数据管道输出。"
+
+
+def _render_training_rows(value: object) -> str:
+    items = [_mapping(item) for item in _sequence(value)]
+    if not items:
+        return '<div class="text-secondary">数据不足，无法生成训练建议。</div>'
+    cards = []
+    for item in items[:6]:
+        title = str(item.get("title") or "训练建议")
+        content = str(item.get("content") or "")
+        meta = " · ".join(
+            str(item.get(key) or "") for key in ("frequency", "target") if item.get(key)
+        )
+        meta_html = f'<div class="text-secondary mt-1">{escape(meta)}</div>' if meta else ""
+        cards.append(
+            '<div class="col-md-4">'
+            f'<div class="fw-bold mb-1">{escape(title)}</div>'
+            f'<div class="text-secondary">{escape(content)}</div>'
+            f"{meta_html}"
+            "</div>"
+        )
+    return "".join(cards)
+
+
+def _court_status_text(report_data: Mapping[str, Any]) -> str:
+    summary = _mapping(_mapping(report_data.get("summary")))
+    reliability = _mapping(summary.get("data_reliability"))
+    rate = _float(reliability.get("court_valid_rate"))
+    if rate <= 0:
+        return "未标定"
+    backend = str(summary.get("court_backend") or "").strip()
+    backend_text = {
+        "opencv": "自动(OpenCV)",
+        "courtkeynet": "自动(CourtKeyNet)",
+        "monotrack": "自动(MonoTrack)",
+        "shuttlecourt": "自动(Seg)",
+        "manual": "手动",
+    }.get(backend.lower(), backend or "自动")
+    return f"{backend_text} {rate * 100:.0f}%"
+
+
+def _bst_coverage_text(report_data: Mapping[str, Any]) -> str:
+    strokes = _sequence(report_data.get("stroke_distribution"))
+    total = sum(_float(_mapping(item).get("value")) for item in strokes)
+    if total <= 0:
+        return "数据不足"
+    return f"{int(total)} 次"
 
 
 def _metric_number(metrics: list[Any], keyword: str) -> float:
@@ -688,6 +1193,8 @@ def _inject_report_text(report_data: Mapping[str, Any], report_text: str) -> dic
     if lines:
         summary["takeaways"] = lines[:5]
         summary["level_note"] = lines[0]
+        # Only claim LLM authorship when there is actual LLM prose to show.
+        payload["analysis_source"] = "llm"
     payload["summary"] = summary
     return payload
 
@@ -719,6 +1226,7 @@ def _merge_api_report_data(
         value = api_data.get(key)
         if isinstance(value, list) and value:
             payload[key] = value
+            payload["analysis_source"] = "llm"
     return payload
 
 
@@ -741,8 +1249,8 @@ def _openai_message_content(raw: Mapping[str, Any]) -> str:
                 parts.append(str(item.get("text", "")))
             else:
                 parts.append(str(item))
-        return "\n".join(part for part in parts if part).strip()
-    return str(content or "").strip()
+        return _strip_reasoning("\n".join(part for part in parts if part))
+    return _strip_reasoning(str(content or ""))
 
 
 def _json_object_from_text(text: str) -> dict[str, Any] | None:
@@ -763,6 +1271,49 @@ def _json_object_from_text(text: str) -> dict[str, Any] | None:
     return decoded if isinstance(decoded, dict) else None
 
 
+def _is_loopback_host(host: str) -> bool:
+    """Whether a hostname is a genuine reference to this machine.
+
+    Only literal loopback addresses and the exact name ``localhost`` count.
+    A *prefix* match would be a hole: ``127.0.0.1.evil.com`` is a legitimate
+    remote hostname that merely starts with the loopback prefix, and letting it
+    skip the proxy would be wrong. Names are therefore not resolved here — DNS
+    could be spoofed, and resolving on every call is needless latency.
+    """
+    name = (host or "").strip().strip("[]").lower()
+    if not name:
+        return False
+    if name in ("localhost", "0.0.0.0"):
+        return True
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return bool(address.is_loopback or address.is_unspecified)
+
+
+def _url_opener(url: str) -> request.OpenerDirector:
+    """Build an opener that never proxies loopback traffic.
+
+    A report endpoint on ``127.0.0.1``/``localhost`` is a local model server
+    (Ollama, LM Studio, llama.cpp, ...). ``urllib`` honours the ambient
+    ``HTTP_PROXY``/``HTTPS_PROXY`` environment variables by default, so when a
+    corporate proxy, VPN client or sandbox proxy is configured the request for
+    the *local* server is sent to the proxy instead and comes back as a
+    confusing ``502 Bad Gateway`` even though the model server is running fine.
+
+    Remote endpoints still go through the configured proxy, which is what an
+    actual cloud API needs.
+    """
+    try:
+        host = parse.urlsplit(url).hostname or ""
+    except ValueError:
+        host = ""
+    if _is_loopback_host(host):
+        return request.build_opener(request.ProxyHandler({}))
+    return request.build_opener()
+
+
 def _urllib_post_json(
     url: str,
     payload: Mapping[str, Any],
@@ -771,8 +1322,9 @@ def _urllib_post_json(
 ) -> Mapping[str, Any]:
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     http_request = request.Request(url, data=body, headers=dict(headers), method="POST")
+    opener = _url_opener(url)
     try:
-        with request.urlopen(http_request, timeout=timeout_s) as response:
+        with opener.open(http_request, timeout=timeout_s) as response:
             response_body = response.read().decode("utf-8")
     except error.URLError as exc:
         raise ReportGenerationError(f"Report API request failed: {exc}") from exc

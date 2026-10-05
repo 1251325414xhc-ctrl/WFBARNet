@@ -1,0 +1,162 @@
+<view class="page">
+  <view class="wrap">
+
+    <view class="hero rise">
+      <view class="hero-inner">
+        <text class="eyebrow">WFBARNet Pipeline</text>
+        <view class="hero-title">上传视频，自动出复盘报告</view>
+        <view class="hero-sub">轨迹识别 + 姿态估计 + 球场单应性 + 击球识别，全流程本地完成</view>
+        <view class="hero-pills">
+          <view class="hero-pill">支持相册导入</view>
+          <view class="hero-pill">支持现场录制</view>
+          <view class="hero-pill">固定机位效果最佳</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 选视频 -->
+    <view class="card rise-1">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Step 1</text>
+          <view class="card-title">选择视频</view>
+        </view>
+        <text class="badge badge--info" wx:if="{{file}}">已选择</text>
+      </view>
+
+      <view class="file-box" wx:if="{{file}}">
+        <view class="file-ico"></view>
+        <view class="file-main">
+          <view class="li-title">{{file.name}}</view>
+          <view class="li-sub">{{file.sizeText}} · {{file.durationText}}</view>
+        </view>
+        <text class="card-more" bindtap="reset">重选</text>
+      </view>
+
+      <block wx:else>
+        <view class="pick-row">
+          <button class="btn btn--primary" bindtap="chooseVideo">从相册/相机选择</button>
+        </view>
+        <button class="btn btn--ghost btn--block" style="margin-top:16rpx" bindtap="useDemo">使用示例视频体验</button>
+      </block>
+    </view>
+
+    <!-- 分析设置 -->
+    <view class="card rise-1">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Step 2</text>
+          <view class="card-title">分析设置</view>
+        </view>
+      </view>
+
+      <picker mode="selector" range="{{courtNames}}" value="{{courtIndex}}" bindchange="onCourtChange">
+        <view class="setting-row">
+          <text class="muted small">关联场地</text>
+          <view class="setting-value">
+            <text class="strong small">{{courtNames[courtIndex]}}</text>
+            <view class="li-arrow"></view>
+          </view>
+        </view>
+      </picker>
+
+      <view class="divider"></view>
+
+      <view class="switch-row">
+        <view class="switch-main">
+          <view class="li-title">教练点评接入</view>
+          <view class="li-sub">生成报告时同步推送给绑定教练</view>
+        </view>
+        <switch checked="{{withCoach}}" color="#0e704a" bindchange="toggleCoach" />
+      </view>
+      <view class="switch-row">
+        <view class="switch-main">
+          <view class="li-title">姿态与步法分析</view>
+          <view class="li-sub">跑动距离、急停启动、站位深度</view>
+        </view>
+        <switch checked="{{withSpin}}" color="#0e704a" bindchange="toggleSpin" />
+      </view>
+      <view class="switch-row">
+        <view class="switch-main">
+          <view class="li-title">球场热区可视化</view>
+          <view class="li-sub">标准场地坐标下的站位热力图</view>
+        </view>
+        <switch checked="{{withHeat}}" color="#0e704a" bindchange="toggleHeat" />
+      </view>
+    </view>
+
+    <!-- 进度 -->
+    <view class="card rise-2" wx:if="{{running || done}}">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Step 3</text>
+          <view class="card-title">{{done ? '分析完成' : '正在分析'}}</view>
+          <view class="card-sub">{{stages[stageIndex].label}} · {{progress}}%</view>
+        </view>
+        <text class="badge {{done ? 'badge--ok' : 'badge--warn'}}">{{done ? '已完成' : '进行中'}}</text>
+      </view>
+
+      <view class="bar-track big-track">
+        <view class="bar-fill" style="width:{{progress}}%"></view>
+      </view>
+
+      <view class="stage" wx:for="{{stages}}" wx:key="key">
+        <view class="stage-dot {{index < stageIndex || done ? 'on' : ''}} {{index === stageIndex && !done ? 'live' : ''}}"></view>
+        <view class="stage-main">
+          <view class="stage-label {{index <= stageIndex ? 'on' : ''}}">{{item.label}}</view>
+          <view class="li-sub">{{item.hint}}</view>
+        </view>
+      </view>
+
+      <block wx:if="{{done}}">
+        <button class="btn btn--primary btn--block" style="margin-top:24rpx" bindtap="goReport">查看分析报告</button>
+        <button class="btn btn--ghost btn--block" style="margin-top:16rpx" bindtap="goRecords">回到训练记录</button>
+      </block>
+    </view>
+
+    <view class="card rise-2" wx:if="{{!running && !done}}">
+      <button class="btn btn--primary btn--block" bindtap="start">开始分析</button>
+      <view class="foot-note" style="margin-top:16rpx">任务会排队执行，长视频请保持小程序在前台。</view>
+    </view>
+
+    <!-- 日志 -->
+    <view class="card rise-3" wx:if="{{log.length}}">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Log</text>
+          <view class="card-title">任务日志</view>
+        </view>
+      </view>
+      <view class="log-box">
+        <view class="log-line" wx:for="{{log}}" wx:key="*this">{{item}}</view>
+      </view>
+    </view>
+
+    <!-- 拍摄建议 -->
+    <view class="card rise-3">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Capture Tips</text>
+          <view class="card-title">怎么拍，指标才准</view>
+        </view>
+      </view>
+      <view class="capture-item">
+        <view class="capture-dot"></view>
+        <view class="capture-text">机位固定在场地正后方高处，画面尽量包含完整双打边线与底线。</view>
+      </view>
+      <view class="capture-item">
+        <view class="capture-dot"></view>
+        <view class="capture-text">球场白线要清晰无遮挡，避免邻场线和顶棚亮线干扰自动标定。</view>
+      </view>
+      <view class="capture-item">
+        <view class="capture-dot"></view>
+        <view class="capture-text">帧率建议 50fps 以上，画面不要晃动；手机录制请关闭防抖裁切。</view>
+      </view>
+      <view class="capture-item">
+        <view class="capture-dot"></view>
+        <view class="capture-text">每次录制 60 秒以上连续回合，样本越长统计越稳。</view>
+      </view>
+    </view>
+
+  </view>
+</view>

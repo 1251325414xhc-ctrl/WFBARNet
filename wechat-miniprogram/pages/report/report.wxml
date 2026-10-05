@@ -1,0 +1,354 @@
+<view class="page">
+  <block wx:if="{{report}}">
+    <view class="wrap">
+
+      <!-- 顶部评分 -->
+      <view class="hero rise">
+        <view class="hero-inner">
+          <view class="hero-flex">
+            <view class="hero-left">
+              <text class="eyebrow">WFBARNet Report</text>
+              <view class="hero-title">{{report.meta.session_kind}}</view>
+              <view class="hero-sub">{{report.meta.court_name}} · {{report.meta.coach_name}} · {{report.meta.generated_at}}</view>
+              <view class="hero-pills">
+                <view class="hero-pill">{{report.meta.user_player}}</view>
+                <view class="hero-pill">{{report.meta.video_name}}</view>
+              </view>
+            </view>
+            <view class="hero-ring">
+              <score-ring score="{{report.summary.overall_score}}" max="{{100}}" tone="dark"></score-ring>
+            </view>
+          </view>
+          <view class="hero-foot">
+            <text class="hero-level">{{report.summary.level_label}}</text>
+            <text class="hero-note">{{report.summary.level_note}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="seg" style="margin-top:24rpx">
+        <view class="seg-item {{active === item.key ? 'on' : ''}}" wx:for="{{tabs}}" wx:key="key"
+          data-key="{{item.key}}" bindtap="onTabTap">{{item.label}}</view>
+      </view>
+
+      <!-- ============ 概览 ============ -->
+      <block wx:if="{{active === 'overview'}}">
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Diagnosis</text>
+              <view class="card-title">本次结论</view>
+            </view>
+          </view>
+          <view class="takeaways">
+            <view class="takeaway" wx:for="{{report.summary.takeaways}}" wx:key="*this">{{item}}</view>
+          </view>
+        </view>
+
+        <view class="metric-grid">
+          <view class="metric" wx:for="{{metrics}}" wx:key="label">
+            <view class="metric-label">{{item.label}}</view>
+            <view class="metric-value num">{{item.value}}</view>
+            <view class="metric-hint">{{item.hint}}</view>
+          </view>
+        </view>
+
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Skill Radar</text>
+              <view class="card-title">能力维度</view>
+              <view class="card-sub">绿色为本次表现，金色虚线为 80 分段参考基准</view>
+            </view>
+          </view>
+          <radar-chart dimensions="{{report.dimensions}}" show-benchmark="{{true}}"></radar-chart>
+          <view class="dim-list">
+            <view class="row" wx:for="{{report.dimensions}}" wx:key="name">
+              <view class="row-head">
+                <text class="row-name">{{item.name}}</text>
+                <text class="row-value num">{{item.score}} <text class="muted tiny">/ 基准 {{item.benchmark}}</text></text>
+              </view>
+              <view class="bar-track">
+                <view class="bar-fill" style="width:{{item.score}}%"></view>
+              </view>
+              <view class="row-note">{{item.note}}</view>
+            </view>
+          </view>
+        </view>
+
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Movement</text>
+              <view class="card-title">双方运动表现对比</view>
+              <view class="card-sub">目标用户 vs 陪练球员</view>
+            </view>
+          </view>
+          <view class="row" wx:for="{{comparison}}" wx:key="label">
+            <view class="row-head">
+              <text class="row-name">{{item.label}}</text>
+              <text class="row-value num">{{item.userText}} / {{item.oppText}}</text>
+            </view>
+            <view class="cmp-line">
+              <text class="cmp-tag">我</text>
+              <view class="bar-track cmp-track">
+                <view class="bar-fill" style="width:{{item.userPercent}}%"></view>
+              </view>
+            </view>
+            <view class="cmp-line">
+              <text class="cmp-tag">陪</text>
+              <view class="bar-track cmp-track">
+                <view class="bar-fill bar-fill--gold" style="width:{{item.oppPercent}}%"></view>
+              </view>
+            </view>
+          </view>
+        </view>
+
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Court Map</text>
+              <view class="card-title">站位热区</view>
+              <view class="card-sub">基于球场单应性投影的标准场地坐标</view>
+            </view>
+          </view>
+          <view class="court-layout">
+            <view class="court-box">
+              <court-heat points="{{heat}}"></court-heat>
+            </view>
+            <view class="zone-box">
+              <view class="zone-card" wx:for="{{zones}}" wx:key="label">
+                <view class="row-head">
+                  <text class="row-name">{{item.label}}</text>
+                  <text class="row-value num">{{item.value}} 次</text>
+                </view>
+                <view class="bar-track">
+                  <view class="bar-fill" style="width:{{item.percent}}%"></view>
+                </view>
+                <view class="row-note">占比 {{item.share}}%</view>
+              </view>
+            </view>
+          </view>
+        </view>
+
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Shots</text>
+              <view class="card-title">击球类型分布</view>
+              <view class="card-sub">BST 击球动作识别结果</view>
+            </view>
+          </view>
+          <view class="row" wx:for="{{strokes}}" wx:key="name">
+            <view class="row-head">
+              <text class="row-name">{{item.name}}</text>
+              <text class="row-value num">{{item.value}} 次</text>
+            </view>
+            <view class="bar-track">
+              <view class="bar-fill bar-fill--sky" style="width:{{item.percent}}%"></view>
+            </view>
+          </view>
+        </view>
+      </block>
+
+      <!-- ============ 数据 ============ -->
+      <block wx:if="{{active === 'data'}}">
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Ball Speed</text>
+              <view class="card-title">球速与强度</view>
+            </view>
+          </view>
+          <view class="speed-row">
+            <view class="speed-cell">
+              <view class="metric-label">最高球速</view>
+              <view class="speed-value num">{{report.summary.ball_speed.max_kmh}}</view>
+              <view class="metric-hint">km/h</view>
+            </view>
+            <view class="speed-cell">
+              <view class="metric-label">平均球速</view>
+              <view class="speed-value num">{{report.summary.ball_speed.avg_kmh}}</view>
+              <view class="metric-hint">km/h</view>
+            </view>
+          </view>
+          <view class="divider"></view>
+          <view class="kv-row">
+            <text class="muted small">运动强度评分</text>
+            <text class="strong small">{{report.summary.motion_intensity_score}} / 100</text>
+          </view>
+          <view class="kv-row">
+            <text class="muted small">高强度移动段</text>
+            <text class="strong small">{{report.summary.high_intensity_count}} 次</text>
+          </view>
+          <view class="kv-row">
+            <text class="muted small">落点识别</text>
+            <text class="strong small">{{report.summary.landing_count}} 次</text>
+          </view>
+          <view class="kv-row">
+            <text class="muted small">出画帧计数</text>
+            <text class="strong small">{{report.summary.out_of_frame_count}} 帧</text>
+          </view>
+          <view class="kv-row">
+            <text class="muted small">回合时长</text>
+            <text class="strong small">{{report.summary.rally_duration_s}} 秒 / 共 {{report.summary.frame_count}} 帧</text>
+          </view>
+          <view class="kv-row">
+            <text class="muted small">平均击球置信度</text>
+            <text class="strong small">{{report.summary.hit_confidence_avg}}</text>
+          </view>
+        </view>
+
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Reliability</text>
+              <view class="card-title">数据可信度</view>
+              <view class="card-sub">最低项 {{report.meta.riskLevelText}}</view>
+            </view>
+          </view>
+          <view class="row" wx:for="{{reliability}}" wx:key="key">
+            <view class="row-head">
+              <text class="row-name">{{item.label}}</text>
+              <text class="row-value num">{{item.valueText}}</text>
+            </view>
+            <view class="bar-track">
+              <view class="bar-fill {{item.percent >= 80 ? '' : 'bar-fill--gold'}}" style="width:{{item.percent}}%"></view>
+            </view>
+            <view class="row-note">{{item.note}}</view>
+          </view>
+          <view class="notice">{{report.meta.riskLevelHint}}</view>
+        </view>
+
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Hit Timeline</text>
+              <view class="card-title">关键击球明细</view>
+              <view class="card-sub">共 {{events.length}} 条，点击条目可复制时间点</view>
+            </view>
+          </view>
+          <view class="table-head">
+            <text class="col-time">时间</text>
+            <text class="col-flex">球员 / 区域</text>
+            <text class="col-flex">动作</text>
+            <text class="col-right">状态</text>
+          </view>
+          <view class="table-row" wx:for="{{events}}" wx:key="key">
+            <text class="col-time num">{{item.time}}</text>
+            <view class="col-flex">
+              <view class="tiny strong">{{item.player_label}}</view>
+              <view class="tiny muted">{{item.zone_label}} · {{item.confidenceText}}</view>
+            </view>
+            <text class="col-flex small">{{item.stroke}}</text>
+            <view class="col-right">
+              <text class="badge badge--{{item.stateClass}}">{{item.stateText}}</text>
+            </view>
+          </view>
+        </view>
+
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Pipeline</text>
+              <view class="card-title">分析链路</view>
+            </view>
+          </view>
+          <view class="kv-row">
+            <text class="muted small">处理管线</text>
+            <text class="strong small">{{report.meta.pipeline}}</text>
+          </view>
+          <view class="kv-row">
+            <text class="muted small">视频文件</text>
+            <text class="strong small">{{report.meta.video_name}}</text>
+          </view>
+          <view class="kv-row">
+            <text class="muted small">生成时间</text>
+            <text class="strong small">{{report.meta.generated_at}}</text>
+          </view>
+          <view class="foot-note">{{report.disclaimer}}</view>
+        </view>
+      </block>
+
+      <!-- ============ 建议 ============ -->
+      <block wx:if="{{active === 'tips'}}">
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Coaching Notes</text>
+              <view class="card-title">需要改进的点</view>
+              <view class="card-sub">按优先级排序，先解决影响最大的环节</view>
+            </view>
+          </view>
+          <view class="improve-card" wx:for="{{improvements}}" wx:key="title">
+            <text class="badge badge--coral">{{item.priority}}</text>
+            <view class="h3" style="margin-top:14rpx">{{item.title}}</view>
+            <view class="row-note">{{item.evidence}}</view>
+            <view class="improve-tip">{{item.suggestion}}</view>
+            <view class="tag-row">
+              <text class="tag" wx:for="{{item.tags}}" wx:for-item="tag" wx:key="*this">{{tag}}</text>
+            </view>
+          </view>
+        </view>
+
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Next 2 Weeks</text>
+              <view class="card-title">训练建议</view>
+            </view>
+          </view>
+          <view class="plan-card" wx:for="{{plan}}" wx:key="title">
+            <view class="plan-index num">{{item.index}}</view>
+            <view class="h3">{{item.title}}</view>
+            <view class="row-note">{{item.content}}</view>
+            <view class="tag-row">
+              <text class="tag tag--court">{{item.frequency}}</text>
+              <text class="tag tag--sky">{{item.target}}</text>
+            </view>
+          </view>
+        </view>
+
+        <view class="card">
+          <view class="card-hd">
+            <view>
+              <text class="eyebrow">Capture Tips</text>
+              <view class="card-title">下次拍摄怎么做得更好</view>
+            </view>
+          </view>
+          <view class="capture-item">
+            <view class="capture-dot"></view>
+            <view class="capture-text">固定机位放在场地正后方高处，尽量拍完整双打边线和底线。</view>
+          </view>
+          <view class="capture-item">
+            <view class="capture-dot"></view>
+            <view class="capture-text">保证球场白线清晰无遮挡，帧率保持 50fps 以上。</view>
+          </view>
+          <view class="capture-item">
+            <view class="capture-dot"></view>
+            <view class="capture-text">避免逆光和顶棚亮线干扰，自动标定失败时手动点选四角。</view>
+          </view>
+          <view class="capture-item">
+            <view class="capture-dot"></view>
+            <view class="capture-text">两周后用同一机位复测 3 段 60 秒视频，指标才可横向比较。</view>
+          </view>
+          <button class="btn btn--primary btn--block" style="margin-top:24rpx" bindtap="goAnalysis">上传新视频复测</button>
+        </view>
+      </block>
+
+      <view class="report-actions">
+        <button class="btn btn--ghost" bindtap="copySummary">复制报告摘要</button>
+        <button class="btn btn--primary" open-type="share">分享给教练</button>
+      </view>
+    </view>
+  </block>
+
+  <view class="wrap" wx:elif="{{!loading}}">
+    <view class="card">
+      <view class="empty">
+        <view class="empty-badge"></view>
+        <view>报告不存在或已被删除</view>
+      </view>
+    </view>
+  </view>
+</view>

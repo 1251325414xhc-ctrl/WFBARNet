@@ -1,0 +1,135 @@
+<view class="page">
+  <view class="m-nav">
+    <view class="m-nav-item on">工作台</view>
+    <view class="m-nav-item" bindtap="goCourts">场地管理</view>
+    <view class="m-nav-item" bindtap="goManage">预约管理</view>
+  </view>
+
+  <view class="wrap" wx:if="{{overview}}">
+
+    <view class="hero rise">
+      <view class="hero-inner">
+        <text class="eyebrow">Merchant Console</text>
+        <view class="hero-title">{{venue.name}} · {{venue.branch}}</view>
+        <view class="hero-sub">{{todayLabel}} · 开放 {{overview.availableCourts}}/{{overview.totalCourts}} 片场地</view>
+        <view class="hero-pills">
+          <view class="hero-pill">今日预约 {{overview.bookingCount}}</view>
+          <view class="hero-pill">在场 {{overview.onCourt}} 人</view>
+          <view class="hero-pill">待处理任务 {{overview.analysisQueue}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="metric-grid">
+      <view class="metric">
+        <view class="metric-label">今日营收</view>
+        <view class="metric-value num">{{overview.revenueText}}</view>
+        <view class="metric-hint">含未支付订单</view>
+      </view>
+      <view class="metric">
+        <view class="metric-label">场地使用率</view>
+        <view class="metric-value num">{{overview.utilizationText}}</view>
+        <view class="metric-hint">按营业时段计算</view>
+      </view>
+      <view class="metric">
+        <view class="metric-label">今日预约</view>
+        <view class="metric-value num">{{overview.bookingCount}}</view>
+        <view class="metric-hint">不含已取消</view>
+      </view>
+      <view class="metric">
+        <view class="metric-label">待确认订单</view>
+        <view class="metric-value num">{{overview.pendingCheckin}}</view>
+        <view class="metric-hint">待支付/待开台</view>
+      </view>
+    </view>
+
+    <!-- 快捷入口 -->
+    <view class="quick rise-1">
+      <view class="quick-item" bindtap="goCourts">
+        <view class="quick-ico quick-ico--court"></view>
+        <view class="quick-label">场地管理</view>
+        <view class="quick-desc">开放状态与价格</view>
+      </view>
+      <view class="quick-item" bindtap="goManage">
+        <view class="quick-ico quick-ico--sky"></view>
+        <view class="quick-label">预约管理</view>
+        <view class="quick-desc">排期与订单流转</view>
+      </view>
+    </view>
+
+    <!-- 场地实时状态 -->
+    <view class="card rise-1">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Live Courts</text>
+          <view class="card-title">场地实时状态</view>
+          <view class="card-sub">绿=空闲，红=使用中，灰=停用或维护</view>
+        </view>
+        <text class="card-more" bindtap="goCourts">管理 ></text>
+      </view>
+      <view class="list">
+        <view class="list-item" wx:for="{{courts}}" wx:key="id">
+          <view class="court-badge court-badge--{{item.stateClass}}">{{item.name}}</view>
+          <view class="li-main" style="padding-left:18rpx">
+            <view class="li-title">{{item.state}} · {{item.type}}</view>
+            <view class="li-sub" wx:if="{{item.currentCustomer}}">当前：{{item.currentCustomer}}</view>
+            <view class="li-sub" wx:else>下一场：{{item.nextLabel}}</view>
+          </view>
+          <view class="li-right">
+            <view class="strong small num">¥{{item.price}}</view>
+            <view class="tiny muted">今日 {{item.todayCount}} 单</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 客户分析任务 -->
+    <view class="card rise-2">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Analysis Queue</text>
+          <view class="card-title">客户分析任务</view>
+          <view class="card-sub">客户上传或机位自动录制的视频</view>
+        </view>
+      </view>
+
+      <view class="list" wx:if="{{tasks.length}}">
+        <view class="list-item" wx:for="{{tasks}}" wx:key="id">
+          <view class="li-main">
+            <view class="li-title">{{item.customer}} · {{item.courtName}}</view>
+            <view class="li-sub">{{item.videoName}}</view>
+            <view class="li-sub">{{item.createdAtLabel}}</view>
+            <view class="bar-track" style="margin-top:12rpx" wx:if="{{item.status !== 'done'}}">
+              <view class="bar-fill bar-fill--gold" style="width:{{item.progress}}%"></view>
+            </view>
+          </view>
+          <view class="li-right">
+            <text class="badge badge--{{item.statusClass}}">{{item.statusText}}</text>
+            <button class="btn btn--sm btn--primary" style="margin-top:12rpx"
+              wx:if="{{item.status !== 'done'}}" data-id="{{item.id}}" bindtap="startTask">开始分析</button>
+          </view>
+        </view>
+      </view>
+
+      <view class="empty" wx:else>暂无待处理任务</view>
+    </view>
+
+    <!-- 营收趋势 -->
+    <view class="card rise-2">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Revenue</text>
+          <view class="card-title">近 14 天营收</view>
+          <view class="card-sub">单位：元</view>
+        </view>
+      </view>
+      <trend-chart series="{{revenue}}" unit="元" accent="#0e704a"></trend-chart>
+    </view>
+
+    <view class="card rise-3">
+      <button class="btn btn--ghost btn--block" bindtap="callVenue">联系场馆前台</button>
+      <button class="btn btn--primary btn--block" style="margin-top:16rpx" bindtap="goCustomer">切换到顾客端</button>
+    </view>
+
+  </view>
+</view>

@@ -1,0 +1,54 @@
+.seg { margin-bottom: 4rpx; }
+.seg-item { font-size: 23rpx; }
+
+.order {
+  margin-top: 20rpx;
+  padding: 24rpx;
+  border-radius: 28rpx;
+  background: #fffdf7;
+  border: 1rpx solid rgba(16, 35, 29, 0.1);
+  box-shadow: 0 14rpx 34rpx rgba(7, 61, 49, 0.08);
+}
+
+.order-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 18rpx;
+  border-bottom: 1rpx solid rgba(16, 35, 29, 0.08);
+}
+
+.order-code { font-size: 22rpx; color: #7d8b83; }
+
+.order-body { display: flex; align-items: center; padding: 22rpx 0; }
+
+.order-court {
+  width: 150rpx;
+  flex-shrink: 0;
+  padding: 18rpx 0;
+  border-radius: 20rpx;
+  text-align: center;
+  background: rgba(14, 112, 74, 0.08);
+}
+
+.court-name { font-size: 24rpx; font-weight: 800; color: #0e704a; }
+.court-time { margin-top: 6rpx; font-size: 20rpx; color: #3d5b4d; }
+
+.order-main { flex: 1; min-width: 0; padding: 0 18rpx; }
+.order-amount { font-size: 30rpx; font-weight: 800; }
+
+.order-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 18rpx;
+  border-top: 1rpx solid rgba(16, 35, 29, 0.08);
+}
+
+.order-actions .btn { margin-left: 14rpx; }
+
+.foot-note {
+  margin-top: 26rpx;
+  text-align: center;
+  color: #7d8b83;
+  font-size: 22rpx;
+}

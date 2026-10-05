@@ -17,8 +17,9 @@ safetensors>=0.5
 tqdm>=4.66
 ultralytics>=8.3
 
-# Optional: TrackNet ONNX / TensorRT export
+# TrackNet ONNX inference/export (CUDA 12.x; 1.27+ defaults to CUDA 13)
 onnx>=1.16
+onnxruntime-gpu>=1.23,<1.27
 
 # Optional: PPT generation tool
 python-pptx>=1.0

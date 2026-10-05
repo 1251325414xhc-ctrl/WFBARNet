@@ -1,0 +1,12 @@
+<view class="ring">
+  <canvas type="2d" id="ring" class="ring-canvas"></canvas>
+  <view class="ring-center">
+    <view class="ring-value {{tone === 'dark' ? 'on-dark' : ''}}">{{score}}</view>
+    <view class="ring-max {{tone === 'dark' ? 'on-dark' : ''}}">/{{max}}</view>
+    <view class="ring-caption {{tone === 'dark' ? 'on-dark' : ''}}" wx:if="{{caption}}">{{caption}}</view>
+    <view class="ring-sub" wx:if="{{sub}}">{{sub}}</view>
+  </view>
+  <view class="ring-fallback" wx:if="{{failed}}">
+    <text class="ring-fallback-score">{{score}}</text>
+  </view>
+</view>

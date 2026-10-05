@@ -1,0 +1,148 @@
+<view class="page">
+  <view class="wrap" wx:if="{{perf}}">
+
+    <view class="hero rise">
+      <view class="hero-inner">
+        <text class="eyebrow">Overall Performance</text>
+        <view class="hero-title">{{perf.latest.levelLabel}}</view>
+        <view class="hero-sub">{{perf.firstDate}} 至 {{perf.lastDate}} · 共 {{perf.count}} 次有效分析</view>
+        <view class="hero-stats">
+          <view class="hero-stat">
+            <view class="hero-stat-value num">{{perf.scoreStats.average}}</view>
+            <view class="hero-stat-label">平均分</view>
+          </view>
+          <view class="hero-stat">
+            <view class="hero-stat-value num">{{perf.scoreStats.best}}</view>
+            <view class="hero-stat-label">最高分</view>
+          </view>
+          <view class="hero-stat">
+            <view class="hero-stat-value num">{{perf.percentile}}%</view>
+            <view class="hero-stat-label">场馆同级别</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="seg" style="margin-top:24rpx">
+      <view class="seg-item {{activeRange === item.key ? 'on' : ''}}" wx:for="{{ranges}}" wx:key="key"
+        data-key="{{item.key}}" bindtap="onRangeTap">{{item.label}}</view>
+    </view>
+
+    <!-- 综合评分趋势 -->
+    <view class="card">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Score Trend</text>
+          <view class="card-title">综合评分趋势</view>
+          <view class="card-sub">区间内提升 {{perf.scoreStats.delta}} 分</view>
+        </view>
+      </view>
+      <trend-chart series="{{trend}}" unit="分" accent="#0e704a"></trend-chart>
+    </view>
+
+    <!-- 六维雷达 -->
+    <view class="card">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Ability Radar</text>
+          <view class="card-title">六维能力对比</view>
+          <view class="card-sub">绿色为最近一次，金色虚线为 80 分参考基准</view>
+        </view>
+      </view>
+      <radar-chart dimensions="{{radar}}" show-benchmark="{{true}}"></radar-chart>
+      <view class="dim-list">
+        <view class="row" wx:for="{{radar}}" wx:key="name">
+          <view class="row-head">
+            <text class="row-name">{{item.name}}</text>
+            <text class="row-value num">{{item.score}} <text class="muted tiny">区间均值 {{item.average}}</text></text>
+          </view>
+          <view class="bar-track">
+            <view class="bar-fill {{item.delta >= 0 ? '' : 'bar-fill--gold'}}" style="width:{{item.score}}%"></view>
+          </view>
+          <view class="row-note">相对区间均值 {{item.deltaText}} 分</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 指标趋势 -->
+    <view class="card">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Metrics</text>
+          <view class="card-title">关键指标走势</view>
+        </view>
+      </view>
+      <view class="chips scroll-x">
+        <scroll-view scroll-x class="chips-scroll">
+          <view class="chip {{activeMetric === item.key ? 'on' : ''}}" wx:for="{{metrics}}" wx:key="key"
+            data-key="{{item.key}}" bindtap="onMetricTap">{{item.label}}</view>
+        </scroll-view>
+      </view>
+      <trend-chart series="{{metricSeries}}" unit="{{activeMetricMeta.unit}}"
+        accent="{{activeMetricMeta.accent}}"></trend-chart>
+      <view class="row-note">{{activeMetricMeta.lowerIsBetter ? '该指标越低越好' : '该指标越高越好'}}</view>
+    </view>
+
+    <!-- 累计 -->
+    <view class="card">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Totals</text>
+          <view class="card-title">区间累计</view>
+        </view>
+      </view>
+      <view class="metric-grid">
+        <view class="metric">
+          <view class="metric-label">训练次数</view>
+          <view class="metric-value num">{{perf.totals.sessions}}</view>
+          <view class="metric-hint">已生成报告的回合</view>
+        </view>
+        <view class="metric">
+          <view class="metric-label">累计跑动</view>
+          <view class="metric-value num">{{perf.totals.distanceM}}</view>
+          <view class="metric-hint">米 · 标准球场坐标</view>
+        </view>
+        <view class="metric">
+          <view class="metric-label">累计击球</view>
+          <view class="metric-value num">{{perf.totals.hits}}</view>
+          <view class="metric-hint">轨迹/BST 合并后</view>
+        </view>
+        <view class="metric">
+          <view class="metric-label">累计回合时长</view>
+          <view class="metric-value num">{{perf.totals.durationText}}</view>
+          <view class="metric-hint">有效回合时间</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 里程碑 -->
+    <view class="card">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Milestones</text>
+          <view class="card-title">个人里程碑</view>
+        </view>
+      </view>
+      <view class="list">
+        <view class="list-item" wx:for="{{perf.milestones}}" wx:key="label">
+          <view class="li-main">
+            <view class="li-title">{{item.label}}</view>
+            <view class="li-sub">{{item.date}}</view>
+          </view>
+          <view class="li-right strong">{{item.value}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="card" wx:if="{{perf.latest}}" bindtap="goReport" data-id="{{perf.latest.id}}">
+      <view class="list-item" style="border-bottom:none;padding:0">
+        <view class="li-main">
+          <view class="li-title">查看最近一次完整报告</view>
+          <view class="li-sub">{{perf.latest.dateLabel}} · {{perf.latest.sessionKind}}</view>
+        </view>
+        <view class="li-arrow"></view>
+      </view>
+    </view>
+
+  </view>
+</view>

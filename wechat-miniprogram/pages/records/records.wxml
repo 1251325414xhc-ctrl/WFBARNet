@@ -1,0 +1,78 @@
+<view class="page page--tab">
+  <view class="wrap">
+
+    <view class="head-card">
+      <view class="head-row">
+        <view>
+          <text class="eyebrow">Training Log</text>
+          <view class="h1">训练记录</view>
+        </view>
+        <button class="btn btn--primary btn--sm" bindtap="goAnalysis">上传视频</button>
+      </view>
+      <view class="head-stats">
+        <view class="head-stat">
+          <view class="head-stat-value num">{{counts.all}}</view>
+          <view class="head-stat-label">全部记录</view>
+        </view>
+        <view class="head-stat">
+          <view class="head-stat-value num">{{counts.done}}</view>
+          <view class="head-stat-label">已出报告</view>
+        </view>
+        <view class="head-stat">
+          <view class="head-stat-value num">{{counts.pending}}</view>
+          <view class="head-stat-label">进行中</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="seg" style="margin-top:24rpx">
+      <view class="seg-item {{active === item.key ? 'on' : ''}}" wx:for="{{filters}}" wx:key="key"
+        data-key="{{item.key}}" bindtap="onFilterTap">{{item.label}}</view>
+    </view>
+
+    <view class="card card--flat" wx:if="{{list.length === 0}}">
+      <view class="empty">
+        <view class="empty-badge"></view>
+        <view>暂无训练记录，上传一段视频试试</view>
+      </view>
+    </view>
+
+    <block wx:for="{{list}}" wx:key="id">
+      <view class="rec-item" wx:if="{{active === 'all' || (active === 'done' && item.status === 'done') || (active === 'pending' && item.status !== 'done')}}"
+        data-id="{{item.id}}" data-status="{{item.status}}" bindtap="openReport">
+        <view class="rec-score">
+          <view class="rec-score-value num">{{item.scoreLabel}}</view>
+          <view class="rec-score-unit" wx:if="{{item.status === 'done'}}">分</view>
+        </view>
+        <view class="rec-main">
+          <view class="rec-title-row">
+            <text class="rec-title">{{item.sessionKind}}</text>
+            <text class="badge badge--{{item.statusClass}}">{{item.statusLabel}}</text>
+          </view>
+          <view class="li-sub">{{item.metaLine}}</view>
+          <view class="li-sub">{{item.detailLine}}</view>
+          <view class="rec-tags">
+            <text class="tag tag--court" wx:if="{{item.status === 'done'}}">{{item.levelLabel}}</text>
+            <text class="tag" wx:if="{{item.weakLine}}">{{item.weakLine}}</text>
+          </view>
+          <view class="bar-track rec-progress" wx:if="{{item.status !== 'done'}}">
+            <view class="bar-fill bar-fill--gold" style="width:{{item.progress}}%"></view>
+          </view>
+        </view>
+        <view class="li-arrow"></view>
+      </view>
+    </block>
+
+    <view class="card rise" style="margin-top:24rpx">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Insight</text>
+          <view class="card-title">想看长期趋势？</view>
+          <view class="card-sub">把多次训练的六维评分、跑动和球速放在一起比较</view>
+        </view>
+      </view>
+      <button class="btn btn--ghost btn--block" bindtap="goPerformance">查看整体表现</button>
+    </view>
+
+  </view>
+</view>

@@ -133,6 +133,16 @@ def main() -> int:
     app.setApplicationName(APP_NAME)
     app.setApplicationDisplayName(APP_NAME)
 
+    # Apply CUDA tuning before any model is built. This must happen outside the
+    # per-branch builders because cudnn.benchmark defaults to a policy that
+    # makes the first inference take tens of seconds (see runtime_tuning).
+    try:
+        from src.utils.runtime_tuning import configure_torch_runtime
+
+        configure_torch_runtime()
+    except Exception:
+        pass
+
     app.setEffectEnabled(Qt.UIEffect.UI_AnimateCombo, False)
     app.setEffectEnabled(Qt.UIEffect.UI_AnimateTooltip, False)
 

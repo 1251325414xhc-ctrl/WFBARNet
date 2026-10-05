@@ -1,0 +1,6 @@
+<view class="court">
+  <canvas type="2d" id="court" class="court-canvas"></canvas>
+  <view class="court-fallback" wx:if="{{failed}}">
+    <view class="court-fb-item" wx:for="{{points}}" wx:key="label">{{item.label}}</view>
+  </view>
+</view>

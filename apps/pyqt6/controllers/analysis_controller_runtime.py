@@ -22,6 +22,21 @@ from PyQt6.QtCore import QElapsedTimer, QSettings, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
+from apps.pyqt6.controllers.analysis_scheduler import (
+    HARD_POSE_STRIDE_CEILING,
+    MAX_POSE_STRIDE,
+    InferenceCostModel,
+    LatencyProbe,
+)
+from apps.pyqt6.controllers.hardware_profile import (
+    QUALITY_AUTO,
+    QUALITY_CHOICES,
+    AnalysisPreset,
+    clear_machine_preset_cache,
+    derive_preset,
+    get_machine_preset,
+    resolve_preset,
+)
 from apps.pyqt6.utils.style import apply_theme, discover_themes
 from apps.pyqt6.utils.theme_transition import start_theme_ripple_transition
 from apps.pyqt6.views.main_window_refined import MainWindow
@@ -41,6 +56,15 @@ from src.postprocess.rally_stats import RallyStatsAccumulator
 from src.postprocess.tracknet_v3_filter import create_tracknet_v3_ball_track_filter
 from src.postprocess.best_stack_events import BestStackTrajectoryEventDetector
 from src.utils.exporters import TRACK_DEBUG_FIELDS, frame_result_log_record, write_frame_log_jsonl
+from src.utils.report_export import (
+    ReportExportHistory,
+    ReportExportTarget,
+    build_report_stem,
+    prune_stale_snapshots,
+    resolve_export_target,
+    summarize_report_data,
+    unique_export_target,
+)
 from src.utils.report_generation import OpenAICompatibleReportApiClient, generate_report_from_rally_record
 from src.utils.structures import FrameResult, PersonPoseResult, TrackResult
 from src.utils.visualize import TrackTrailRenderer
@@ -53,15 +77,45 @@ TRACK_STATE_RESET_GAP_S = 0.75
 POSE_CANDIDATE_LIMIT = 12
 POSE_COURT_MARGIN_CM = 30.0
 POSE_MAX_MISSING_SECONDS = 0.35
-POSE_INFERENCE_STRIDE = 1
+# Upper bound on pose sub-sampling. Pose feeds player-distance and stroke
+# classification, which tolerate temporal reuse; the track model always runs
+# every frame because trajectory accuracy depends on it. The effective stride
+# is lowered automatically when measured latency would blow the frame budget.
+POSE_INFERENCE_STRIDE = 3
+
+# TrackNet input resolution. TrackNetV3 downsamples 3x, so both dimensions
+# must stay multiples of 8 (the model snaps them automatically otherwise).
+# Latency scales steeply with this size, measured per frame on an RTX 5070:
+#   512x288 -> 23.5ms   448x256 -> ~17ms   384x216 -> 13.1ms
+# TRACK_INPUT_SIZE_BASE is the historical default and acts as the "no override
+# argument passed" sentinel, so single-argument factories keep working.
+TRACK_INPUT_SIZE_BASE = (512, 288)
+TRACK_INPUT_SIZE = (384, 216)
+TRACK_INPUT_SIZE_PRECISE = (512, 288)
+TRACK_INPUT_SIZE_BALANCED = (448, 256)
 POSE_YOLO_IMGSZ = 960
 POSE_CROP_IMGSZ = 640
 POSE_CROP_PADDING = 0.30
-DEFAULT_REPORT_API_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-DEFAULT_REPORT_API_MODEL = "qwen-plus"
+DEFAULT_REPORT_API_PROVIDER = "ollama_local"
+DEFAULT_LOCAL_REPORT_API_ENDPOINT = "http://127.0.0.1:11434/v1/chat/completions"
+DEFAULT_LOCAL_REPORT_API_MODEL = "qwen3:8b"
+DEFAULT_BAILIAN_REPORT_API_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+DEFAULT_BAILIAN_REPORT_API_MODEL = "qwen-plus"
+DEFAULT_REPORT_API_ENDPOINT = DEFAULT_LOCAL_REPORT_API_ENDPOINT
+DEFAULT_REPORT_API_MODEL = DEFAULT_LOCAL_REPORT_API_MODEL
 POSE_CROP_MIN_BOX_CONF = 0.45
 POSE_MAX_CROPS = 8
 COURT_BOOTSTRAP_OFFSETS_MS = (0, 750, 1500, 2250, 3000, 3750)
+
+
+def _report_api_defaults(provider: str) -> tuple[str, str]:
+    if str(provider).strip() == "bailian_openai":
+        return DEFAULT_BAILIAN_REPORT_API_ENDPOINT, DEFAULT_BAILIAN_REPORT_API_MODEL
+    return DEFAULT_LOCAL_REPORT_API_ENDPOINT, DEFAULT_LOCAL_REPORT_API_MODEL
+
+
+def _report_api_requires_key(provider: str) -> bool:
+    return str(provider).strip() != "ollama_local"
 
 
 def _flush_stderr_if_available() -> None:
@@ -380,7 +434,10 @@ def _is_finite(value: float) -> bool:
     return value == value and value not in (float("inf"), float("-inf"))
 
 
-def _create_runtime_track_branch(model_weight: str) -> TrackBranch:
+def _create_runtime_track_branch(
+    model_weight: str,
+    input_size: tuple[int, int] = TRACK_INPUT_SIZE_BASE,
+) -> TrackBranch:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model_path = Path(model_weight)
     if model_path.suffix.lower() == ".engine":
@@ -395,12 +452,23 @@ def _create_runtime_track_branch(model_weight: str) -> TrackBranch:
     return TrackBranch(
         model_weight=str(model_weight),
         device=device,
-        input_size=(512, 288),
+        input_size=input_size,
         score_thr=0.35,
     )
 
 
-def _create_runtime_pose_branch(model_weight: str) -> PoseBranch:
+def _create_runtime_pose_branch(
+    model_weight: str,
+    *,
+    imgsz: int = POSE_YOLO_IMGSZ,
+    crop_pose: bool = True,
+    crop_imgsz: int = POSE_CROP_IMGSZ,
+) -> PoseBranch:
+    """Build the pose branch. Defaults preserve the original behaviour.
+
+    ``imgsz`` and ``crop_pose`` are the main throughput levers on weak GPUs;
+    the hardware-adaptive presets lower them instead of dropping video frames.
+    """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     return PoseBranch(
         backend="yolo26s-pose",
@@ -408,9 +476,9 @@ def _create_runtime_pose_branch(model_weight: str) -> PoseBranch:
         device=device,
         conf_thr=0.35,
         max_persons=POSE_CANDIDATE_LIMIT,
-        yolo_imgsz=POSE_YOLO_IMGSZ,
-        yolo_crop_pose=True,
-        yolo_crop_imgsz=POSE_CROP_IMGSZ,
+        yolo_imgsz=int(imgsz),
+        yolo_crop_pose=bool(crop_pose),
+        yolo_crop_imgsz=int(crop_imgsz),
         yolo_crop_padding=POSE_CROP_PADDING,
         yolo_crop_min_box_conf=POSE_CROP_MIN_BOX_CONF,
         yolo_max_pose_crops=POSE_MAX_CROPS,
@@ -440,12 +508,20 @@ class ModelLoadWorker(QThread):
         load_track: bool,
         load_pose: bool,
         load_bst: bool,
+        track_input_size: tuple[int, int] = TRACK_INPUT_SIZE_BASE,
+        pose_imgsz: int = POSE_YOLO_IMGSZ,
+        pose_crop_pose: bool = True,
+        pose_crop_imgsz: int = POSE_CROP_IMGSZ,
     ) -> None:
         super().__init__()
         self._track_model_path = str(track_model_path)
         self._pose_model_path = str(pose_model_path)
         self._bst_model_path = Path(bst_model_path)
         self._bst_device = str(bst_device)
+        self._track_input_size = tuple(track_input_size)
+        self._pose_imgsz = int(pose_imgsz)
+        self._pose_crop_pose = bool(pose_crop_pose)
+        self._pose_crop_imgsz = int(pose_crop_imgsz)
         self._load_track = bool(load_track)
         self._load_pose = bool(load_pose)
         self._load_bst = bool(load_bst)
@@ -465,7 +541,15 @@ class ModelLoadWorker(QThread):
                 track_path = Path(self._track_model_path)
                 if not track_path.is_file():
                     raise FileNotFoundError(f"球轨迹模型文件不存在: {track_path}")
-                result["track_branch"] = _create_runtime_track_branch(str(track_path))
+                # Only override the resolution when it differs from the
+                # factory default, so single-argument factories and
+                # monkeypatches of _create_runtime_track_branch keep working.
+                if self._track_input_size == TRACK_INPUT_SIZE_BASE:
+                    result["track_branch"] = _create_runtime_track_branch(str(track_path))
+                else:
+                    result["track_branch"] = _create_runtime_track_branch(
+                        str(track_path), input_size=self._track_input_size
+                    )
                 if self._stop_if_cancelled():
                     return
 
@@ -474,7 +558,22 @@ class ModelLoadWorker(QThread):
                 pose_path = Path(self._pose_model_path)
                 if not pose_path.is_file():
                     raise FileNotFoundError(f"骨骼模型文件不存在: {pose_path}")
-                result["pose_branch"] = _create_runtime_pose_branch(str(pose_path))
+                # Only pass overrides when they differ from the factory
+                # defaults, so single-argument factories keep working.
+                pose_defaults = (
+                    self._pose_imgsz == POSE_YOLO_IMGSZ
+                    and self._pose_crop_pose
+                    and self._pose_crop_imgsz == POSE_CROP_IMGSZ
+                )
+                if pose_defaults:
+                    result["pose_branch"] = _create_runtime_pose_branch(str(pose_path))
+                else:
+                    result["pose_branch"] = _create_runtime_pose_branch(
+                        str(pose_path),
+                        imgsz=self._pose_imgsz,
+                        crop_pose=self._pose_crop_pose,
+                        crop_imgsz=self._pose_crop_imgsz,
+                    )
                 if self._stop_if_cancelled():
                     return
 
@@ -596,6 +695,7 @@ class TrackNetPlaybackWorker(QThread):
     frameReady = pyqtSignal(object)
     playbackFinished = pyqtSignal(object)
     failed = pyqtSignal(str)
+    frameTimingReady = pyqtSignal(str)
 
     def __init__(
         self,
@@ -784,13 +884,26 @@ class TrackNetPlaybackWorker(QThread):
             FixedLagTrackConfig(fps=fps, delay_ms=300 if self._track_enabled else 0)
         )
         pose_tracker = CourtPoseTargetTracker(
-            max_missing_frames=max(self._pose_stride, int(round(fps * POSE_MAX_MISSING_SECONDS))),
+            # Allow the tracker to coast across the frames a pose run skips;
+            # otherwise a stride > 1 looks like a detection dropout.
+            max_missing_frames=max(
+                max(self._pose_stride, MAX_POSE_STRIDE),
+                int(round(fps * POSE_MAX_MISSING_SECONDS)),
+            ),
             court_margin=POSE_COURT_MARGIN_CM,
             detection_smoothing=0.78,
             velocity_smoothing=0.50,
             court_required=False,
             predict_missing_motion=True,
             motion_prediction_scale=0.55,
+        )
+        # The tracker above was built from the preset ceiling, but the adaptive
+        # scheduler may relax the stride further on high-frame-rate footage;
+        # keep the coast window wide enough that those gaps are not read as
+        # lost detections.
+        pose_tracker.max_missing_frames = max(
+            int(getattr(pose_tracker, "max_missing_frames", 0) or 0),
+            HARD_POSE_STRIDE_CEILING,
         )
         distance_accumulator = PlayerDistanceAccumulator()
         rally_stats = RallyStatsAccumulator(
@@ -808,6 +921,38 @@ class TrackNetPlaybackWorker(QThread):
         display_interval_ms = 1000.0 / self._display_fps_limit
         display_every_frame = fps <= self._display_fps_limit
         next_display_ms = float(base_ms)
+
+        # Pose is sub-sampled so the combined per-frame cost fits the video's
+        # wall-clock budget. The stride is re-derived from measured latency
+        # instead of being fixed, so slow GPUs degrade pose frequency rather
+        # than dropping video frames.
+        track_probe = LatencyProbe()
+        pose_probe = LatencyProbe()
+        cost_model = InferenceCostModel(fps=fps)
+        # The preset sets a *preferred* ceiling (quality target). For
+        # high-frame-rate footage the frame budget can be tighter than any
+        # preferred stride can meet, so allow the scheduler to relax further up
+        # to the hard ceiling rather than stutter.
+        budget_ms = cost_model.frame_budget_ms
+        preset_stride = max(1, int(self._pose_stride))
+        max_pose_stride = preset_stride
+        if self._pose_enabled and 1000.0 / max(1.0, fps) > 0 and budget_ms < 20.0:
+            max_pose_stride = max(preset_stride, HARD_POSE_STRIDE_CEILING)
+        pose_stride = max(1, min(max_pose_stride, cost_model.stride))
+        pose_frames_since_run = 0
+        last_pose_result: list[Any] = []
+        scheduler_note_logged = False
+        budget_warned = False
+        # Pose runs once every ``pose_stride`` frames, but downstream work that
+        # *is* per-frame (player-distance accumulation, stroke features, the
+        # overlay) must not see a frozen result. Cache the post-processed pose
+        # keyed by the frame it was computed from: on a skipped frame the cache
+        # is already valid, so the expensive ``pose_tracker.update`` — which
+        # re-associates detections against the court projection every call —
+        # is not paid again for a frame whose detections did not change.
+        cached_pose_key: int | None = None
+        cached_last_pose: list[Any] = []
+        cached_court: Any = None
 
         clock = QElapsedTimer()
         clock.start()
@@ -840,7 +985,20 @@ class TrackNetPlaybackWorker(QThread):
                             self._court_service.submit_frame(current_frame, frame_id, current_ms)
                             court_prediction = self._court_service.latest_prediction()
 
-                        pose_due = self._pose_enabled and source_frames % self._pose_stride == 0
+                        # Pose runs every Nth frame; between runs the previous
+                        # detections are reused so downstream pose consumers
+                        # (distance, stroke, rendering) see a continuous stream.
+                        pose_due = False
+                        if self._pose_enabled:
+                            if pose_frames_since_run >= pose_stride:
+                                pose_due = True
+                            elif last_pose_result:
+                                # Reuse last detections without charging a run.
+                                pose_due = False
+                            else:
+                                # Nothing cached yet: force one run so pose is never empty.
+                                pose_due = True
+
                         run_parallel = parallel_inference and pose_due
                         if run_parallel:
                             track_future = infer_executor.submit(
@@ -856,26 +1014,55 @@ class TrackNetPlaybackWorker(QThread):
                             detections = pose_future.result()
                         else:
                             if self._track_enabled:
+                                track_started = perf_counter()
                                 candidates = self._track_branch.infer_candidate_results(
                                     [prev_frame, current_frame, next_frame]
                                 )
+                                track_probe.add((perf_counter() - track_started) * 1000.0)
                             else:
                                 candidates = []
-                            detections = (
-                                self._pose_branch.infer(current_frame, court_prediction=court_prediction)
-                                if pose_due
-                                else []
-                            )
+                            if pose_due:
+                                pose_started = perf_counter()
+                                detections = self._pose_branch.infer(
+                                    current_frame, court_prediction=court_prediction
+                                )
+                                pose_probe.add((perf_counter() - pose_started) * 1000.0)
+                                last_pose_result = detections
+                                pose_frames_since_run = 0
+                            else:
+                                detections = last_pose_result
 
                         if self._pose_enabled:
-                            last_pose = pose_tracker.update(
-                                detections,
-                                court_prediction,
-                                frame_shape=current_frame.shape,
-                            )
+                            # ``pose_tracker.update`` re-projects detections
+                            # onto the court and re-runs the association; its
+                            # inputs (detections + court_prediction) are
+                            # unchanged on a skipped frame, so reuse the cached
+                            # result instead of paying for it again. A court
+                            # change or a track-state gap invalidates it.
+                            if (
+                                cached_pose_key is not None
+                                and not pose_due
+                                and court_prediction is cached_court
+                            ):
+                                last_pose = cached_last_pose
+                            else:
+                                if cached_pose_key is not None and not pose_due:
+                                    # Detections are stale but the projection
+                                    # moved under them; re-derive for real.
+                                    pose_tracker.reset()
+                                last_pose = pose_tracker.update(
+                                    detections,
+                                    court_prediction,
+                                    frame_shape=current_frame.shape,
+                                )
+                                cached_pose_key = source_frames
+                                cached_last_pose = last_pose
+                                cached_court = court_prediction
                         else:
                             pose_tracker.reset()
                             last_pose = []
+                            cached_pose_key = None
+                            cached_last_pose = []
 
                         if self._track_enabled:
                             track_dt = frame_step_seconds(current_ms, previous_track_ms, fps)
@@ -903,6 +1090,27 @@ class TrackNetPlaybackWorker(QThread):
                             else (0.85 * ema_infer_fps + 0.15 * infer_fps)
                         )
                         source_frames += 1
+                        pose_frames_since_run += 1
+
+                        # Re-derive the stride as real latencies come in.
+                        if self._pose_enabled and pose_probe.ready and source_frames % 15 == 0:
+                            cost_model.track_ms = track_probe.ema_ms
+                            cost_model.pose_ms = pose_probe.ema_ms
+                            desired = max(1, min(max_pose_stride, cost_model.stride))
+                            if desired != pose_stride:
+                                pose_stride = desired
+                            if not scheduler_note_logged:
+                                self.frameTimingReady.emit(cost_model.describe())
+                                scheduler_note_logged = True
+                            if not cost_model.fits and not budget_warned:
+                                budget_warned = True
+                                self.frameTimingReady.emit(
+                                    "当前硬件无法实时处理该视频（每帧需 "
+                                    f"{cost_model.projected_ms():.0f}ms，预算 "
+                                    f"{cost_model.frame_budget_ms:.0f}ms）。"
+                                    "建议降低性能档位、关闭骨骼模型，或启用 TensorRT。"
+                                )
+
                         track_debug = track_filter.last_debug_record() if self._track_enabled else None
                         lagged_frame = track_postprocessor.push(
                             track,
@@ -1266,13 +1474,26 @@ class CameraInferenceWorker(QThread):
             FixedLagTrackConfig(fps=fps, delay_ms=300 if self._track_enabled else 0)
         )
         pose_tracker = CourtPoseTargetTracker(
-            max_missing_frames=max(self._pose_stride, int(round(fps * POSE_MAX_MISSING_SECONDS))),
+            # Allow the tracker to coast across the frames a pose run skips;
+            # otherwise a stride > 1 looks like a detection dropout.
+            max_missing_frames=max(
+                max(self._pose_stride, MAX_POSE_STRIDE),
+                int(round(fps * POSE_MAX_MISSING_SECONDS)),
+            ),
             court_margin=POSE_COURT_MARGIN_CM,
             detection_smoothing=0.78,
             velocity_smoothing=0.50,
             court_required=False,
             predict_missing_motion=True,
             motion_prediction_scale=0.55,
+        )
+        # The tracker above was built from the preset ceiling, but the adaptive
+        # scheduler may relax the stride further on high-frame-rate footage;
+        # keep the coast window wide enough that those gaps are not read as
+        # lost detections.
+        pose_tracker.max_missing_frames = max(
+            int(getattr(pose_tracker, "max_missing_frames", 0) or 0),
+            HARD_POSE_STRIDE_CEILING,
         )
         distance_accumulator = PlayerDistanceAccumulator()
         rally_stats = RallyStatsAccumulator(
@@ -1729,13 +1950,26 @@ class BatchInferenceWorker(QThread):
             FixedLagTrackConfig(fps=fps, delay_ms=300 if self._track_enabled else 0)
         )
         pose_tracker = CourtPoseTargetTracker(
-            max_missing_frames=max(self._pose_stride, int(round(fps * POSE_MAX_MISSING_SECONDS))),
+            # Allow the tracker to coast across the frames a pose run skips;
+            # otherwise a stride > 1 looks like a detection dropout.
+            max_missing_frames=max(
+                max(self._pose_stride, MAX_POSE_STRIDE),
+                int(round(fps * POSE_MAX_MISSING_SECONDS)),
+            ),
             court_margin=POSE_COURT_MARGIN_CM,
             detection_smoothing=0.78,
             velocity_smoothing=0.50,
             court_required=False,
             predict_missing_motion=True,
             motion_prediction_scale=0.55,
+        )
+        # The tracker above was built from the preset ceiling, but the adaptive
+        # scheduler may relax the stride further on high-frame-rate footage;
+        # keep the coast window wide enough that those gaps are not read as
+        # lost detections.
+        pose_tracker.max_missing_frames = max(
+            int(getattr(pose_tracker, "max_missing_frames", 0) or 0),
+            HARD_POSE_STRIDE_CEILING,
         )
         court_predictor = BatchCourtPredictor(
             backends=tuple(self._court_backends) if self._court_backends else default_batch_court_backends(),
@@ -1976,6 +2210,105 @@ class BatchInferenceWorker(QThread):
         return record
 
 
+class HardwareWarmupWorker(QThread):
+    """Measure the quality ladder and pre-warm the models off the GUI thread.
+
+    Runs once shortly after startup. It does two independent things and either
+    may fail without affecting the other:
+
+    * Meaure per-configuration inference cost so ``derive_preset`` can pick a
+      rung that actually fits the frame budget. This is what stops "auto" from
+      choosing a 30fps-incompatible configuration on a fast GPU.
+    * Run one inference per model at the real input size, so the one-off CUDA /
+      cuDNN / graph-initialisation cost is paid before the user clicks start
+      instead of inside the first analysed frame.
+
+    Failures are silent by design: a machine that cannot be warmed still works,
+    it just keeps the lazier cold-start behaviour.
+    """
+
+    finished = pyqtSignal(object)
+
+    def __init__(
+        self,
+        *,
+        track_model_path: str,
+        pose_model_path: str,
+        load_track: bool,
+        load_pose: bool,
+    ) -> None:
+        super().__init__()
+        self._track_model_path = str(track_model_path)
+        self._pose_model_path = str(pose_model_path)
+        self._load_track = bool(load_track)
+        self._load_pose = bool(load_pose)
+        self.note = ""
+
+    def run(self) -> None:
+        try:
+            self.note = self._run_impl()
+        except Exception as exc:  # pragma: no cover - defensive
+            self.note = f"[性能] 硬件预热跳过: {exc}"
+        finally:
+            self.finished.emit(self)
+
+    def _run_impl(self) -> str:
+        from apps.pyqt6.controllers.hardware_profile import (
+            derive_preset,
+            measure_ladder_cost,
+            probe_hardware,
+        )
+
+        profile = probe_hardware()
+        tier = None
+        try:
+            from apps.pyqt6.controllers.hardware_profile import classify_tier
+
+            tier = classify_tier(profile)
+        except Exception:
+            tier = None
+
+        measured = measure_ladder_cost(tier) if tier else {}
+        if measured:
+            global_cost_cache = measured
+            from apps.pyqt6.controllers import hardware_profile as _hp
+
+            _hp._cost_cache = global_cost_cache
+        preset = derive_preset(profile, measured_cost=measured or None)
+        self._warm_models()
+
+        if measured:
+            detail = "，".join(
+                f"{size[0]}×{size[1]} {cost[0]:.0f}+{cost[1]:.0f}ms"
+                for (size, _pose_imgsz), cost in sorted(measured.items())
+            )
+            return (
+                f"[性能] 实测推理耗时: {detail} → 选用 {preset.track_input_size[0]}×"
+                f"{preset.track_input_size[1]} / 姿态 {preset.pose_imgsz}px / "
+                f"跳帧上限 {preset.max_pose_stride}（模型已预热）"
+            )
+        return "[性能] 模型已预热（未能实测推理耗时，使用默认档位）"
+
+    def _warm_models(self) -> None:
+        import numpy as np
+
+        frame = (np.random.rand(1080, 1920, 3) * 255).astype(np.uint8)
+        if self._load_track and Path(self._track_model_path).is_file():
+            try:
+                branch = _create_runtime_track_branch(self._track_model_path)
+                branch.infer_candidate_results([frame, frame, frame])
+                del branch
+            except Exception:
+                pass
+        if self._load_pose and Path(self._pose_model_path).is_file():
+            try:
+                branch = _create_runtime_pose_branch(self._pose_model_path)
+                branch.infer(frame, court_prediction=None)
+                del branch
+            except Exception:
+                pass
+
+
 class ReportGenerationWorker(QThread):
     reportFinished = pyqtSignal(object)
     failed = pyqtSignal(str)
@@ -1986,23 +2319,34 @@ class ReportGenerationWorker(QThread):
         rally_record: dict[str, Any],
         athlete_name: str,
         video_name: str,
-        output_html_path: Path,
+        output_target: ReportExportTarget,
         use_api: bool,
         endpoint: str,
         model: str,
         api_key: str,
+        trigger: str = "manual",
     ) -> None:
         super().__init__()
         self._rally_record = rally_record
         self._athlete_name = athlete_name
         self._video_name = video_name
-        self._output_html_path = output_html_path
+        self._output_target = output_target
         self._use_api = bool(use_api)
         self._endpoint = endpoint
         self._model = model
         self._api_key = api_key
+        self._trigger = str(trigger or "manual")
 
     def run(self) -> None:
+        target = self._output_target
+        # PDF/PNG need a GUI thread, so always render HTML here and convert
+        # on the main thread once the worker reports back.
+        html_target = ReportExportTarget(
+            path=target.path.with_suffix(".html"),
+            format="html",
+            include_sidecar=target.include_sidecar,
+            include_assets=target.include_assets,
+        )
         api_error = ""
         try:
             api_client = None
@@ -2011,29 +2355,15 @@ class ReportGenerationWorker(QThread):
                     self._endpoint,
                     model=self._model,
                     api_key=self._api_key,
-                    timeout_s=60.0,
+                    timeout_s=180.0,
                 )
             try:
-                response = generate_report_from_rally_record(
-                    self._rally_record,
-                    athlete_name=self._athlete_name,
-                    user_player="bottom",
-                    video_name=self._video_name,
-                    api_client=api_client,
-                    use_api=api_client is not None,
-                    output_html_path=self._output_html_path,
-                )
+                response = self._generate(api_client, html_target)
             except Exception as exc:
                 if not self._use_api:
                     raise
                 api_error = str(exc)
-                response = generate_report_from_rally_record(
-                    self._rally_record,
-                    athlete_name=self._athlete_name,
-                    user_player="bottom",
-                    video_name=self._video_name,
-                    output_html_path=self._output_html_path,
-                )
+                response = self._generate(None, html_target, api_error=api_error)
         except Exception as exc:
             self.failed.emit(str(exc))
             return
@@ -2041,8 +2371,54 @@ class ReportGenerationWorker(QThread):
         payload = response.to_dict()
         if api_error:
             payload["api_error"] = api_error
-        payload["output_html_path"] = str(self._output_html_path)
+        payload["output_html_path"] = str(html_target.path)
+        payload["output_target"] = target.to_dict()
+        payload["video_name"] = self._video_name
+        payload["athlete_name"] = self._athlete_name
+        payload["trigger"] = self._trigger
         self.reportFinished.emit(payload)
+
+    def _generate(
+        self,
+        api_client: Any | None,
+        html_target: ReportExportTarget,
+        *,
+        api_error: str = "",
+    ) -> Any:
+        from src.utils.report_export import write_report_sidecar
+        from src.utils.report_generation import (
+            ReportGenerationRequest,
+            ReportGenerationService,
+            render_tabler_report_html,
+        )
+
+        generation_request = ReportGenerationRequest.from_rally_record(
+            self._rally_record,
+            athlete_name=self._athlete_name,
+            user_player="bottom",
+            video_name=self._video_name,
+        )
+        service = ReportGenerationService(api_client)
+        response = service.generate(generation_request, use_api=api_client is not None)
+        if api_error:
+            # Put the failure *inside* the report. Logging alone let a local
+            # template report pass for an LLM analysis, which is how "报告没有
+            # 根据视频内容分析" stayed invisible.
+            response.report_data["analysis_error"] = api_error
+            response.html = render_tabler_report_html(response.report_data)
+        service.export_html(response, html_target.path)
+        write_report_sidecar(
+            html_target,
+            {
+                "report_id": response.report_id,
+                "status": response.status,
+                "provider": response.provider,
+                "report_text": response.report_text,
+                "report_data": response.report_data,
+                "raw_response": response.raw_response,
+            },
+        )
+        return response
 
 
 class MainController:
@@ -2061,10 +2437,26 @@ class MainController:
         self._pose_model_enabled = self._load_bool_setting("pose_model_enabled", True)
         self._track_model_enabled = self._load_bool_setting("track_model_enabled", True)
         self._debug_csv_enabled = self._load_bool_setting("debug_csv_enabled", False)
-        self._report_api_enabled = self._load_bool_setting("report_api_enabled", False)
-        self._report_api_provider = str(self._settings.value("report_api_provider", "bailian_openai") or "bailian_openai")
-        self._report_api_endpoint = str(self._settings.value("report_api_endpoint", DEFAULT_REPORT_API_ENDPOINT) or DEFAULT_REPORT_API_ENDPOINT)
-        self._report_api_model = str(self._settings.value("report_api_model", DEFAULT_REPORT_API_MODEL) or DEFAULT_REPORT_API_MODEL)
+        # Quality mode: "auto" adapts to the detected GPU; the others are
+        # explicit user overrides.
+        self._analysis_quality = str(
+            self._settings.value("analysis_quality", QUALITY_AUTO) or QUALITY_AUTO
+        )
+        self._apply_analysis_preset(self._analysis_quality, log=False)
+        self._report_api_provider = str(
+            self._settings.value("report_api_provider", DEFAULT_REPORT_API_PROVIDER)
+            or DEFAULT_REPORT_API_PROVIDER
+        )
+        default_report_endpoint, default_report_model = _report_api_defaults(self._report_api_provider)
+        self._report_api_enabled = self._load_bool_setting("report_api_enabled", True)
+        self._report_api_endpoint = str(
+            self._settings.value("report_api_endpoint", default_report_endpoint)
+            or default_report_endpoint
+        )
+        self._report_api_model = str(
+            self._settings.value("report_api_model", default_report_model)
+            or default_report_model
+        )
         self._report_api_key = str(self._settings.value("report_api_key", "") or "")
         self._theme_dirs = discover_themes()
         self._active_theme_name = self._resolve_initial_theme_name()
@@ -2080,6 +2472,7 @@ class MainController:
         self._report_worker: ReportGenerationWorker | None = None
         self._model_load_worker: ModelLoadWorker | None = None
         self._model_load_continuation: Callable[[], None] | None = None
+        self._warmup_worker: HardwareWarmupWorker | None = None
         self._batch_results: dict[str, dict[str, Any]] = {}
         self._batch_order: list[str] = []
         self._current_rally_record: dict[str, Any] | None = None
@@ -2104,7 +2497,17 @@ class MainController:
         self.view.set_model_settings(self._pose_model_path, self._track_model_path)
         self.view.set_model_switches(self._pose_model_enabled, self._track_model_enabled)
         self.view.set_debug_csv_enabled(self._debug_csv_enabled)
+        # Optional view capability: lightweight test doubles and older shells
+        # may not implement the quality selector.
+        set_quality = getattr(self.view, "set_analysis_quality", None)
+        if callable(set_quality):
+            set_quality(self._analysis_quality)
         self._log_missing_model_paths()
+        self._log_hardware_profile()
+        # Measure real inference cost and pre-warm the models in the background.
+        # Deliberately after the UI is constructed so the window shows first.
+        self._start_hardware_warmup()
+        self._refresh_report_export_history()
         self.view.set_report_api_settings(
             {
                 "enabled": self._report_api_enabled,
@@ -2484,15 +2887,29 @@ class MainController:
 
         self._track_model_path = str(self._resolve_model_path(self._track_model_path))
         self._pose_model_path = str(self._resolve_model_path(self._pose_model_path))
-        worker = ModelLoadWorker(
-            track_model_path=self._track_model_path,
-            pose_model_path=self._pose_model_path,
-            bst_model_path=self._default_bst_model_path,
-            bst_device=self._bst_device,
-            load_track=needs_track,
-            load_pose=needs_pose,
-            load_bst=needs_bst,
-        )
+        worker_kwargs: dict[str, Any] = {
+            "track_model_path": self._track_model_path,
+            "pose_model_path": self._pose_model_path,
+            "bst_model_path": self._default_bst_model_path,
+            "bst_device": self._bst_device,
+            "load_track": needs_track,
+            "load_pose": needs_pose,
+            "load_bst": needs_bst,
+        }
+        # getattr: partially-constructed controllers (tests, embedders) may
+        # not carry the quality preference yet.
+        input_size = getattr(self, "_track_input_size", TRACK_INPUT_SIZE_BASE)
+        if needs_track and tuple(input_size) != TRACK_INPUT_SIZE_BASE:
+            # Only pass a non-default size, so existing single-argument
+            # factories/monkeypatches keep working.
+            worker_kwargs["track_input_size"] = tuple(input_size)
+        if needs_pose:
+            worker_kwargs["pose_imgsz"] = getattr(self, "_pose_imgsz", POSE_YOLO_IMGSZ)
+            worker_kwargs["pose_crop_pose"] = getattr(self, "_pose_crop_pose", True)
+            worker_kwargs["pose_crop_imgsz"] = getattr(
+                self, "_pose_crop_imgsz", POSE_CROP_IMGSZ
+            )
+        worker = ModelLoadWorker(**worker_kwargs)
         self._model_load_worker = worker
         self._model_load_continuation = continuation
         worker.stageChanged.connect(
@@ -2546,7 +2963,7 @@ class MainController:
             self.view.append_log(
                 f"[TrackNet] 模型已加载: {getattr(self._track_branch, 'device', '?')} | "
                 f"后端 {getattr(self._track_branch, 'backend_name', '?')} | "
-                f"{Path(self._track_model_path).name}"
+                f"{Path(getattr(self, '_track_model_path', '') or '').name}"
             )
         if "pose_branch" in result:
             self._pose_branch = result["pose_branch"]
@@ -2616,6 +3033,9 @@ class MainController:
         self.view.modelSettingsDefaultsRequested.connect(self.handle_model_settings_defaults)
         self.view.modelSwitchesChanged.connect(self.handle_model_switches_changed)
         self.view.debugCsvChanged.connect(self.handle_debug_csv_changed)
+        quality_signal = getattr(self.view, "analysisQualityChanged", None)
+        if quality_signal is not None:
+            quality_signal.connect(self.handle_analysis_quality_changed)
         self.view.reportApiSettingsApplyRequested.connect(self.handle_report_api_settings_apply)
 
     def _set_view_status(self, state: str, text: str) -> None:
@@ -2890,14 +3310,128 @@ class MainController:
         state_text = "enabled" if self._debug_csv_enabled else "disabled"
         self.view.append_log(f"[TrackDebug] CSV debug output {state_text}.")
 
+    def _log_hardware_profile(self) -> None:
+        """Report the detected GPU once at startup so slowness is diagnosable."""
+        try:
+            _preset, profile = get_machine_preset()
+            self.view.append_log(f"[性能] 显卡: {profile.describe()}")
+        except Exception as exc:  # pragma: no cover - defensive
+            self.view.append_log(f"[性能] 硬件检测失败: {exc}")
+        try:
+            from src.utils.runtime_tuning import describe_runtime
+
+            self.view.append_log(f"[性能] {describe_runtime()}")
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+    def _start_hardware_warmup(self) -> None:
+        """Measure real inference cost and pre-warm CUDA on a worker thread.
+
+        Two problems are solved at once, and neither can be solved on the GUI
+        thread:
+
+        1. The quality ladder is only meaningful against *measured* latency.
+           Probing it costs seconds, so it runs here rather than in ``__init__``.
+        2. The first inference after load pays oneoff CUDA/cuDNN/graph setup.
+           Paying it now means the first analysed frame is already warm.
+        """
+        if self._warmup_worker is not None:
+            return
+        if not self._track_model_enabled and not self._pose_model_enabled:
+            return
+        worker = HardwareWarmupWorker(
+            track_model_path=str(self._resolve_model_path(self._track_model_path)),
+            pose_model_path=str(self._resolve_model_path(self._pose_model_path)),
+            load_track=self._track_model_enabled,
+            load_pose=self._pose_model_enabled,
+        )
+        self._warmup_worker = worker
+        worker.finished.connect(lambda worker=worker: self._on_warmup_finished(worker))
+        worker.start()
+
+    def _on_warmup_finished(self, worker: object) -> None:
+        if self._warmup_worker is not worker:
+            return
+        self._warmup_worker = None
+        note = getattr(worker, "note", "")
+        if note:
+            self.view.append_log(note)
+        # Re-resolve the preset now that real latencies are known. Ignore this
+        # if the user is mid-analysis or picked an explicit (non-auto) mode.
+        if self._is_inference_running():
+            return
+        if getattr(self, "_analysis_quality", QUALITY_AUTO) != QUALITY_AUTO:
+            return
+        try:
+            self._apply_analysis_preset(QUALITY_AUTO, log=True)
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+    def _apply_analysis_preset(self, quality: str, *, log: bool) -> None:
+        """Resolve a quality mode into concrete parameters and store them.
+
+        In "auto" mode the preset comes from probing the GPU. Either way the
+        runtime latency tuner can still lower the pose stride further.
+        """
+        name = str(quality or QUALITY_AUTO)
+        if name == QUALITY_AUTO:
+            clear_machine_preset_cache()
+            preset: AnalysisPreset = derive_preset()
+        else:
+            preset = resolve_preset(name)
+        self._analysis_quality = name
+        self._analysis_preset = preset
+        self._track_input_size = preset.track_input_size
+        self._pose_imgsz = preset.pose_imgsz
+        self._pose_crop_pose = preset.pose_crop_pose
+        self._pose_crop_imgsz = preset.pose_crop_imgsz
+        self._max_pose_stride = preset.max_pose_stride
+        set_note = getattr(self.view, "set_analysis_preset_note", None)
+        if callable(set_note):
+            set_note(preset.explain() if name == QUALITY_AUTO else preset.reason)
+        if log:
+            self.view.append_log(f"[性能] {preset.explain()}")
+
+    def handle_analysis_quality_changed(self, quality: str) -> None:
+        """Switch analysis performance mode; forces a model reload when idle."""
+        name = str(quality or QUALITY_AUTO)
+        if name not in {choice[0] for choice in QUALITY_CHOICES}:
+            return
+        if name == getattr(self, "_analysis_quality", QUALITY_AUTO):
+            return
+        set_quality = getattr(self.view, "set_analysis_quality", None)
+        if self._is_inference_running():
+            if callable(set_quality):
+                set_quality(getattr(self, "_analysis_quality", QUALITY_AUTO))
+            self.view.append_log("[性能] 请先停止当前分析，再切换性能档位。")
+            return
+
+        # A manual override after "auto" should re-probe, in case the user
+        # switched GPUs (eGPU, dock) since startup.
+        if name == QUALITY_AUTO:
+            clear_machine_preset_cache()
+            preset, profile = get_machine_preset(refresh=True)
+            self.view.append_log(f"[性能] 检测到显卡: {profile.describe()}")
+        self._apply_analysis_preset(name, log=True)
+        self._settings.setValue("analysis_quality", name)
+        self._settings.sync()
+        # The resolution is baked into the loaded graph inputs, so the branch
+        # has to be rebuilt before the next run.
+        self._track_branch = None
+        self._pose_branch = None
+        self.view.append_log("[性能] 参数已保存，下次开始分析时生效。")
+
     def handle_report_api_settings_apply(self, settings: dict[str, object]) -> None:
         enabled = bool(settings.get("enabled"))
-        endpoint = str(settings.get("endpoint") or DEFAULT_REPORT_API_ENDPOINT).strip()
-        model = str(settings.get("model") or DEFAULT_REPORT_API_MODEL).strip()
+        provider = str(settings.get("provider") or DEFAULT_REPORT_API_PROVIDER).strip()
+        default_endpoint, default_model = _report_api_defaults(provider)
+        endpoint = str(settings.get("endpoint") or default_endpoint).strip()
+        model = str(settings.get("model") or default_model).strip()
         api_key = str(settings.get("api_key") or "").strip()
-        provider = str(settings.get("provider") or "bailian_openai").strip()
-        if enabled and (not endpoint or not model or not api_key):
-            self.view.append_log("[报告] 启用 API 时需要填写 Endpoint、模型名和 API Key。")
+        missing_key = _report_api_requires_key(provider) and not api_key
+        if enabled and (not endpoint or not model or missing_key):
+            requirement = "Endpoint、模型名和 API Key" if missing_key else "Endpoint 和模型名"
+            self.view.append_log(f"[报告] 启用模型服务时需要填写{requirement}。")
             return
 
         self._report_api_enabled = enabled
@@ -2912,7 +3446,8 @@ class MainController:
         self._settings.setValue("report_api_key", self._report_api_key)
         self._settings.sync()
         state_text = "启用" if enabled else "关闭"
-        self.view.append_log(f"[报告] 模型 API 已{state_text} | 平台 {provider} | 模型 {model}")
+        platform_text = "本地 Ollama" if provider == "ollama_local" else provider
+        self.view.append_log(f"[报告] 大模型已{state_text} | 平台 {platform_text} | 模型 {model}")
 
     def handle_model_settings_apply(self, pose_model_path: str, track_model_path: str) -> None:
         if self._is_inference_running():
@@ -3256,7 +3791,7 @@ class MainController:
             self._selected_batch_folder,
             self._track_branch,
             self._pose_branch,
-            pose_stride=POSE_INFERENCE_STRIDE,
+            pose_stride=getattr(self, "_max_pose_stride", POSE_INFERENCE_STRIDE),
             track_enabled=self._track_model_enabled,
             pose_enabled=self._pose_model_enabled,
             bst_model=self._bst_model,
@@ -3305,7 +3840,7 @@ class MainController:
             camera_index,
             self._track_branch,
             self._pose_branch,
-            pose_stride=POSE_INFERENCE_STRIDE,
+            pose_stride=getattr(self, "_max_pose_stride", POSE_INFERENCE_STRIDE),
             track_enabled=self._track_model_enabled,
             pose_enabled=self._pose_model_enabled,
             court_service=self._court_service,
@@ -3355,7 +3890,7 @@ class MainController:
             self._track_branch,
             self._pose_branch,
             start_ms=start_ms,
-            pose_stride=POSE_INFERENCE_STRIDE,
+            pose_stride=getattr(self, "_max_pose_stride", POSE_INFERENCE_STRIDE),
             track_enabled=self._track_model_enabled,
             pose_enabled=self._pose_model_enabled,
             court_service=self._court_service,
@@ -3367,6 +3902,9 @@ class MainController:
         self._playback_worker.frameReady.connect(self._on_frame_ready)
         self._playback_worker.playbackFinished.connect(self._on_playback_finished)
         self._playback_worker.failed.connect(self._on_playback_failed)
+        self._playback_worker.frameTimingReady.connect(
+            lambda text: self.view.append_log(f"[性能] 推理调度: {text}")
+        )
         self._playback_worker.finished.connect(
             lambda worker=self._playback_worker: self._release_playback_worker(worker)
         )
@@ -3691,7 +4229,7 @@ class MainController:
             self._set_current_rally_record(payload.get("rally_record"))
         self._set_idle_state()
         self._set_view_status(final_state, final_text)
-        self._maybe_start_stopped_report(stopped)
+        self._maybe_auto_export_report(stopped)
 
     def _on_camera_failed(self, message: str) -> None:
         self.view.set_progress_busy(False)
@@ -3732,7 +4270,7 @@ class MainController:
             self._set_current_rally_record(payload.get("rally_record"))
         self._set_idle_state()
         self._set_view_status(final_state, final_text)
-        self._maybe_start_stopped_report(stopped)
+        self._maybe_auto_export_report(stopped)
 
         if self._pending_seek_ms is not None and self._selected_video_path is not None:
             pending_seek_ms = self._pending_seek_ms
@@ -3908,6 +4446,13 @@ class MainController:
         self.view.set_progress_busy(False)
 
     def shutdown(self) -> None:
+        warmup_worker = self._warmup_worker
+        self._warmup_worker = None
+        if warmup_worker is not None and warmup_worker.isRunning():
+            # Bounded wait: the warm-up may still be measuring, but we must not
+            # hang the exit path on it. The thread is a daemon-like QThread and
+            # carries no user data, so abandoning it is safe.
+            warmup_worker.wait(3000)
         model_worker = self._model_load_worker
         self._model_load_continuation = None
         if model_worker is not None:
@@ -3964,35 +4509,131 @@ class MainController:
             self.view.append_log("[报告] 暂无可导出的回合报告，请先完成一次分析。")
             return
         trigger = "manual_running" if self._analysis_busy else "manual"
-        self._start_report_generation(record, trigger=trigger)
-
-    def _maybe_start_stopped_report(self, stopped: bool) -> None:
-        if not stopped:
-            self._auto_report_after_stop = False
+        target = self._ask_report_export_target(record, trigger=trigger)
+        if target is None:
+            self.view.append_log("[报告] 已取消导出。")
             return
-        if not self._auto_report_after_stop:
+        self._start_report_generation(record, trigger=trigger, target=target)
+
+    def _report_export_dir(self) -> Path:
+        return self._project_root / "outputs" / "reports"
+
+    def _refresh_report_export_history(self) -> None:
+        """Drop history entries whose files vanished and push the rest to the UI."""
+        try:
+            history = ReportExportHistory.load(self._report_export_dir())
+            history.prune_missing()
+            self.view.set_report_export_history(history.existing_entries())
+        except Exception as exc:  # pragma: no cover - defensive
+            self.view.append_log(f"[报告] 导出历史读取失败: {exc}")
+
+    def _ask_report_export_target(
+        self,
+        record: dict[str, Any],
+        *,
+        trigger: str,
+    ) -> ReportExportTarget | None:
+        """Ask where to save the report; returns None when the user cancels."""
+        export_dir = self._report_export_dir()
+        export_dir.mkdir(parents=True, exist_ok=True)
+        suggested = build_report_stem(video_name=self._report_video_name(record))
+        file_path, _selected_filter = QFileDialog.getSaveFileName(
+            self.view,
+            "导出训练报告" if trigger != "stopped" else "导出训练报告（停止后自动）",
+            str(export_dir / f"{suggested}.html"),
+            "HTML 报告 (*.html);;PDF 报告 (*.pdf);;长图 PNG (*.png)",
+        )
+        if not file_path:
+            return None
+        output_path = Path(file_path)
+        suffix = output_path.suffix.lower().lstrip(".")
+        if suffix not in ("html", "pdf", "png"):
+            suffix = "html"
+        target = ReportExportTarget(
+            path=output_path.with_suffix(f".{suffix}"),
+            format=suffix,
+            include_sidecar=True,
+            include_assets=True,
+        )
+        return unique_export_target(target)
+
+    def _maybe_auto_export_report(self, stopped: bool) -> None:
+        """Auto-export a report when an analysis run reaches a reportable end.
+
+        Two endings qualify:
+
+        * any run that reached the **end of its footage** (``stopped`` is
+          False) — the normal way a video analysis completes; and
+        * a **camera** run the user stopped — ``_auto_report_after_stop`` is
+          set by :meth:`handle_force_stop` for that case only.
+
+        A user-initiated stop of *video* playback deliberately does **not**
+        export: the user paused to look at a partial rally, so a half-finished
+        record is not what they asked to save. Seeking is excluded too, since it
+        stops the worker with ``stopped=True`` and a pending seek.
+        """
+        if stopped and not self._auto_report_after_stop:
             return
         self._auto_report_after_stop = False
         record = self._current_rally_record or self._live_rally_record
         if record is None:
-            self.view.append_log("[报告] 停止时没有可用统计快照，未调用报告 API。")
+            self.view.append_log("[报告] 分析已结束，但没有可用的统计快照，未生成报告。")
             return
-        self._start_report_generation(record, trigger="stopped")
+        # Automatic exports never interrupt with a dialog; they land in the
+        # reports folder using the same naming scheme as manual exports.
+        export_dir = self._report_export_dir()
+        export_dir.mkdir(parents=True, exist_ok=True)
+        target = unique_export_target(
+            resolve_export_target(
+                export_dir,
+                video_name=self._report_video_name(record),
+                generated_at=datetime.now(),
+                fmt="html",
+            )
+        )
+        self.view.append_log(f"[报告] 分析结束，正在自动生成报告：{target.path.name}")
+        self._start_report_generation(
+            record,
+            trigger="stopped" if stopped else "completed",
+            target=target,
+        )
 
-    def _start_report_generation(self, record: dict[str, Any], *, trigger: str) -> None:
+    def _start_report_generation(
+        self,
+        record: dict[str, Any],
+        *,
+        trigger: str,
+        target: ReportExportTarget | None = None,
+    ) -> None:
         if self._report_worker is not None and self._report_worker.isRunning():
             self.view.append_log("[报告] 上一次报告生成仍在进行，请稍后。")
             return
+        has_credentials = bool(self._report_api_key) or not _report_api_requires_key(
+            self._report_api_provider
+        )
         use_api = self._report_api_enabled and bool(
-            self._report_api_endpoint and self._report_api_model and self._report_api_key
+            self._report_api_endpoint and self._report_api_model and has_credentials
         )
         if self._report_api_enabled and not use_api:
             self.view.append_log("[报告] API 未完整配置，已使用本地报告生成。")
         if trigger == "stopped" and not use_api:
             self.view.append_log("[报告] 已停止分析；未启用完整 API 配置，本次将生成本地报告。")
+        if trigger == "completed" and not use_api:
+            self.view.append_log("[报告] 分析已完成；未启用完整 API 配置，本次将生成本地报告。")
 
         video_name = self._report_video_name(record)
-        output_path = self._project_root / "assets" / "dist" / "index.html"
+        athlete_name = self._report_athlete_name(record)
+        if target is None:
+            export_dir = self._report_export_dir()
+            export_dir.mkdir(parents=True, exist_ok=True)
+            target = unique_export_target(
+                resolve_export_target(
+                    export_dir,
+                    video_name=video_name,
+                    generated_at=datetime.now(),
+                    fmt="html",
+                )
+            )
         try:
             latest_path, dist_data_path = self._save_report_input_snapshot(
                 record,
@@ -4004,13 +4645,14 @@ class MainController:
             return
         self._report_worker = ReportGenerationWorker(
             rally_record=record,
-            athlete_name=self._report_athlete_name(record),
+            athlete_name=athlete_name,
             video_name=video_name,
-            output_html_path=output_path,
+            output_target=target,
             use_api=use_api,
             endpoint=self._report_api_endpoint,
             model=self._report_api_model,
             api_key=self._report_api_key,
+            trigger=trigger,
         )
         self._report_worker.reportFinished.connect(self._on_report_generation_finished)
         self._report_worker.failed.connect(self._on_report_generation_failed)
@@ -4035,14 +4677,70 @@ class MainController:
             self.view.append_log("[报告] 报告生成完成，但返回结果不可读。")
             self._set_idle_state()
             return
-        output_path = Path(str(payload.get("output_html_path") or self._project_root / "assets" / "dist" / "index.html"))
+        html_path = Path(str(payload.get("output_html_path") or ""))
         provider = str(payload.get("provider") or "unknown")
         api_error = str(payload.get("api_error") or "")
         if api_error:
             self.view.append_log(f"[报告] API 调用失败，已回退本地报告: {api_error}")
-        self.view.append_log(f"[报告] 已写入 dist 报告文件: {output_path} | provider {provider}")
-        self.view.set_report_preview_file(output_path)
+
+        target_info = payload.get("output_target")
+        target = None
+        if isinstance(target_info, dict):
+            target = ReportExportTarget(
+                path=Path(str(target_info.get("path") or html_path)),
+                format=str(target_info.get("format") or "html"),
+                include_sidecar=bool(target_info.get("include_sidecar", True)),
+                include_assets=bool(target_info.get("include_assets", True)),
+            )
+
+        final_path = html_path
+        if target is not None and target.format in ("pdf", "png"):
+            final_path = self._convert_report_image(html_path, target)
+        elif target is not None:
+            final_path = target.path
+
+        if html_path.is_file():
+            self.view.append_log(f"[报告] 已导出: {final_path} | provider {provider}")
+            self._record_report_export(target or ReportExportTarget(path=html_path, format="html"), payload)
+        else:
+            self.view.append_log(f"[报告] 报告文件未找到: {html_path}")
+        self.view.set_report_preview_file(html_path if html_path.is_file() else final_path)
         self._set_idle_state()
+
+    def _convert_report_image(self, html_path: Path, target: ReportExportTarget) -> Path:
+        """Rasterize/print an exported HTML report in an isolated process."""
+        from src.utils.report_export import ReportImageExportError, export_report_image
+
+        try:
+            return export_report_image(
+                html_path,
+                target.path,
+                fmt=target.format,
+                landscape=True,
+            )
+        except ReportImageExportError as exc:
+            self.view.append_log(f"[报告] {target.format.upper()} 导出失败: {exc}")
+            return html_path
+        except Exception as exc:  # pragma: no cover - defensive
+            self.view.append_log(f"[报告] {target.format.upper()} 导出异常: {exc}")
+            return html_path
+
+    def _record_report_export(self, target: ReportExportTarget, payload: dict[str, Any]) -> None:
+        """Persist the export into the history index and prune stale snapshots."""
+        report_data = payload.get("report_data")
+        history = ReportExportHistory.load(self._report_export_dir())
+        history.record(
+            target,
+            video_name=str(payload.get("video_name") or ""),
+            athlete_name=str(payload.get("athlete_name") or ""),
+            provider=str(payload.get("provider") or "local"),
+            trigger=str(payload.get("trigger") or "manual"),
+            summary=summarize_report_data(report_data) if isinstance(report_data, dict) else {},
+        )
+        removed = prune_stale_snapshots(self._runtime_data_dir())
+        if removed:
+            self.view.append_log(f"[报告] 已清理 {len(removed)} 个过期输入快照。")
+        self.view.set_report_export_history(history.existing_entries())
 
     def _on_report_generation_failed(self, message: str) -> None:
         self.view.set_progress_busy(False)

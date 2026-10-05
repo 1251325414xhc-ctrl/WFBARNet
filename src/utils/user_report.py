@@ -230,6 +230,8 @@ def build_user_report_data_from_rally_record(
             "level_label": _level_label(overall_score),
             "level_note": _level_note(overall_score),
             "takeaways": _takeaways(overall_score, dimensions, user, reliability),
+            "court_backend": str(summary.get("court_backend") or "").strip(),
+            "data_reliability": dict(reliability),
             "metrics": [
                 {"label": "分析时长", "value": _fmt_seconds(summary.get("duration_s")), "hint": "上传视频有效片段"},
                 {"label": "有效击球", "value": f"{int(_num(summary.get('rally_hit_count')))} 次", "hint": "轨迹/BST 合并后"},

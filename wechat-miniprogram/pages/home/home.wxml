@@ -1,0 +1,190 @@
+<view class="page page--tab">
+  <view class="wrap">
+
+    <!-- Hero：综合评分 -->
+    <view class="hero rise">
+      <view class="hero-inner">
+        <view class="hero-flex">
+          <view class="hero-left">
+            <text class="eyebrow">WFBARNet 智能分析</text>
+            <view class="hero-title">{{greeting}}</view>
+            <view class="hero-sub">{{venue.name}} · {{venue.branch}}</view>
+            <view class="hero-pills">
+              <view class="hero-pill">{{user.name}}</view>
+              <view class="hero-pill">{{user.memberLevel}}</view>
+              <view class="hero-pill">已训练 {{user.doneCount}} 次</view>
+              <view class="hero-pill" wx:if="{{user.pendingCount > 0}}">{{user.pendingCount}} 个任务进行中</view>
+            </view>
+          </view>
+          <view class="hero-ring" bindtap="goReport">
+            <score-ring score="{{latest.score}}" max="{{100}}" tone="dark"></score-ring>
+          </view>
+        </view>
+        <view class="hero-foot" bindtap="goReport">
+          <view class="hero-foot-left">
+            <text class="hero-level">{{latest.levelLabel}}</text>
+            <text class="hero-delta">{{deltaLabel}}</text>
+          </view>
+          <text class="hero-foot-right">查看完整报告 ></text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 快捷入口 -->
+    <view class="quick rise-1">
+      <view class="quick-item" wx:for="{{quick}}" wx:key="key"
+        data-route="{{item.route}}" data-tab="{{item.tab}}" bindtap="onQuickTap">
+        <view class="quick-ico quick-ico--{{item.tone}}"></view>
+        <view class="quick-label">{{item.label}}</view>
+        <view class="quick-desc">{{item.desc}}</view>
+      </view>
+    </view>
+
+    <!-- 下一次预约 -->
+    <view class="card rise-1" wx:if="{{nextBooking}}">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Upcoming</text>
+          <view class="card-title">下一次场地</view>
+        </view>
+        <text class="card-more" bindtap="goOrders">全部预约 ></text>
+      </view>
+      <view class="booking-line">
+        <view class="booking-time">
+          <view class="booking-day">{{nextBooking.relative}}</view>
+          <view class="booking-clock">{{nextBooking.startLabel}} - {{nextBooking.endLabel}}</view>
+        </view>
+        <view class="booking-info">
+          <view class="li-title">{{nextBooking.courtName}} · {{nextBooking.durationMinutes}} 分钟</view>
+          <view class="li-sub">{{nextBooking.dateLabel}} {{nextBooking.weekLabel}} · {{nextBooking.code}}</view>
+          <view class="tag-row">
+            <text class="badge {{nextBooking.status === 'paid' ? 'badge--ok' : 'badge--warn'}}">{{nextBooking.statusLabel}}</text>
+            <text class="badge badge--info" wx:if="{{nextBooking.withAnalysis}}">含智能分析</text>
+            <text class="badge" wx:if="{{nextBooking.coach}}">{{nextBooking.coach}}</text>
+          </view>
+        </view>
+        <view class="booking-amount">{{nextBooking.amountLabel}}</view>
+      </view>
+    </view>
+
+    <view class="card rise-1" wx:else>
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Booking</text>
+          <view class="card-title">还没有进行中的预约</view>
+        </view>
+      </view>
+      <view class="muted small">场馆有智能机位，预约后系统会自动录制并生成分析报告。</view>
+      <button class="btn btn--primary btn--block" style="margin-top:24rpx" bindtap="goBooking">去预约场地</button>
+    </view>
+
+    <!-- 最近一次训练 -->
+    <view class="card rise-2" wx:if="{{latest}}">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Latest Session</text>
+          <view class="card-title">最近一次训练</view>
+          <view class="card-sub">{{latestMeta}}</view>
+        </view>
+        <text class="card-more" bindtap="goReport">报告 ></text>
+      </view>
+
+      <view class="metric-grid">
+        <view class="metric" wx:for="{{latest.metrics}}" wx:key="label">
+          <view class="metric-label">{{item.label}}</view>
+          <view class="metric-value num">{{item.value}}</view>
+          <view class="metric-hint">{{item.hint}}</view>
+        </view>
+      </view>
+
+      <view class="speed-row">
+        <view class="speed-cell">
+          <view class="metric-label">最高球速</view>
+          <view class="speed-value num">{{latest.ballSpeed.max_kmh}}</view>
+          <view class="metric-hint">km/h · 轨迹估计</view>
+        </view>
+        <view class="speed-cell">
+          <view class="metric-label">平均球速</view>
+          <view class="speed-value num">{{latest.ballSpeed.avg_kmh}}</view>
+          <view class="metric-hint">km/h · 轨迹估计</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 趋势 -->
+    <view class="card rise-2" wx:if="{{trend.length > 1}}">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Trend</text>
+          <view class="card-title">近 {{trend.length}} 次综合评分</view>
+        </view>
+        <text class="card-more" bindtap="goPerformance">整体表现 ></text>
+      </view>
+      <trend-chart series="{{trend}}" unit="分" accent="#0e704a"></trend-chart>
+      <view class="stat-row">
+        <view class="stat-cell">
+          <view class="stat-value num">{{scoreStats.best}}</view>
+          <view class="stat-label">历史最高</view>
+        </view>
+        <view class="stat-cell">
+          <view class="stat-value num">{{scoreStats.average}}</view>
+          <view class="stat-label">平均分</view>
+        </view>
+        <view class="stat-cell">
+          <view class="stat-value num">{{latest.score}}</view>
+          <view class="stat-label">最近一次</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 教练提示 -->
+    <view class="card rise-3" wx:if="{{tip}}">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Coaching Notes</text>
+          <view class="card-title">下一步重点</view>
+        </view>
+        <text class="badge badge--coral">{{tip.priority}}</text>
+      </view>
+      <view class="h3">{{tip.title}}</view>
+      <view class="row-note">{{tip.evidence}}</view>
+      <view class="tip-box">{{tip.suggestion}}</view>
+      <view class="tag-row">
+        <text class="tag tag--court" wx:for="{{tip.tags}}" wx:key="*this">{{item}}</text>
+      </view>
+      <view class="btn-row">
+        <button class="btn btn--ghost" bindtap="goAnalysis">上传新视频</button>
+        <button class="btn btn--primary" bindtap="goReport">查看训练计划</button>
+      </view>
+    </view>
+
+    <!-- 场馆信息 -->
+    <view class="card rise-3">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Venue</text>
+          <view class="card-title">{{venue.name}}</view>
+          <view class="card-sub">{{venue.address}}</view>
+        </view>
+      </view>
+      <view class="tag-row">
+        <text class="tag tag--court" wx:for="{{venue.tags}}" wx:key="*this">{{item}}</text>
+      </view>
+      <view class="divider"></view>
+      <view class="venue-row">
+        <text class="muted small">营业时间</text>
+        <text class="strong small">{{venue.openTime}} - {{venue.closeTime}}</text>
+      </view>
+      <view class="venue-row">
+        <text class="muted small">联系电话</text>
+        <text class="strong small">{{venue.phone}}</text>
+      </view>
+      <view class="venue-row">
+        <text class="muted small">场馆评分</text>
+        <text class="strong small">{{venue.rating}} 分 · {{venue.reviewCount}} 条评价</text>
+      </view>
+    </view>
+
+    <view class="foot-note">{{venue.notice}}</view>
+  </view>
+</view>

@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from src.models.mmpose_backend import MMPoseInferenceItem
+from src.utils.runtime_tuning import configure_torch_runtime
 
 COURT_WIDTH = 610.0
 COURT_LENGTH = 1340.0
@@ -39,6 +40,10 @@ class YoloPoseBackend:
             raise ValueError("YOLO pose backend requires model_weight, e.g. assets/weights/pose/yolo26s-pose.pt")
         if not Path(self.model_weight).exists():
             raise FileNotFoundError(f"YOLO pose weight file not found: {self.model_weight}")
+        # Ultralytics pulls in torch and runs its own warm-up pass on first
+        # predict; apply the shared CUDA policy first so that pass is not
+        # paying for per-shape cuDNN algorithm search.
+        configure_torch_runtime()
         self.model = self._load_model(self.model_weight)
         self.person_model = self._load_person_model()
 

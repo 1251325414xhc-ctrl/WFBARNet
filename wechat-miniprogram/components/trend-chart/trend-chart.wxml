@@ -1,0 +1,9 @@
+<view class="trend">
+  <canvas type="2d" id="trend" class="trend-canvas"></canvas>
+  <view class="trend-fallback" wx:if="{{failed}}">
+    <view class="trend-fb-item" wx:for="{{series}}" wx:key="label">
+      <text>{{item.label}}</text>
+      <text>{{item.value}}{{unit}}</text>
+    </view>
+  </view>
+</view>

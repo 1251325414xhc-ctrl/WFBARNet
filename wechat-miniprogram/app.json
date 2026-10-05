@@ -1,0 +1,44 @@
+{
+  "pages": [
+    "pages/home/home",
+    "pages/records/records",
+    "pages/booking/booking",
+    "pages/profile/profile",
+    "pages/report/report",
+    "pages/analysis/analysis",
+    "pages/performance/performance",
+    "pages/orders/orders",
+    "pages/merchant/workbench/workbench",
+    "pages/merchant/courts/courts",
+    "pages/merchant/manage/manage"
+  ],
+  "window": {
+    "backgroundTextStyle": "dark",
+    "backgroundColor": "#f2f6ef",
+    "navigationBarBackgroundColor": "#0e704a",
+    "navigationBarTitleText": "羽迹智能",
+    "navigationBarTextStyle": "white"
+  },
+  "tabBar": {
+    "custom": true,
+    "color": "#5f7068",
+    "selectedColor": "#0e704a",
+    "backgroundColor": "#fffdf7",
+    "borderStyle": "white",
+    "list": [
+      { "pagePath": "pages/home/home", "text": "首页" },
+      { "pagePath": "pages/records/records", "text": "训练" },
+      { "pagePath": "pages/booking/booking", "text": "预约" },
+      { "pagePath": "pages/profile/profile", "text": "我的" }
+    ]
+  },
+  "usingComponents": {
+    "score-ring": "/components/score-ring/score-ring",
+    "radar-chart": "/components/radar-chart/radar-chart",
+    "court-heat": "/components/court-heat/court-heat",
+    "trend-chart": "/components/trend-chart/trend-chart"
+  },
+  "lazyCodeLoading": "requiredComponents",
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

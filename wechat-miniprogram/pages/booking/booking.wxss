@@ -1,0 +1,195 @@
+.head-card {
+  padding: 30rpx 26rpx;
+  border-radius: 30rpx;
+  background: linear-gradient(135deg, #073d31, #0e704a 70%);
+  color: #f8fff2;
+  box-shadow: 0 18rpx 44rpx rgba(7, 61, 49, 0.24);
+}
+
+.head-top { display: flex; align-items: center; justify-content: space-between; }
+.head-card .h1 { color: #f8fff2; }
+.head-card .eyebrow { color: #b6e95e; }
+.head-sub { margin-top: 12rpx; font-size: 23rpx; color: rgba(248, 255, 242, 0.8); }
+
+.mine-line {
+  display: flex;
+  align-items: center;
+  margin-top: 22rpx;
+  padding: 16rpx 20rpx;
+  border-radius: 20rpx;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.mine-label {
+  margin-right: 14rpx;
+  padding: 2rpx 12rpx;
+  border-radius: 999rpx;
+  background: #b6e95e;
+  color: #08301f;
+  font-size: 20rpx;
+  font-weight: 700;
+}
+
+.mine-text { flex: 1; font-size: 24rpx; }
+.mine-line .li-arrow { border-color: rgba(248, 255, 242, 0.8); }
+
+/* 日期条 */
+.date-strip { margin-top: 24rpx; }
+.date-scroll { white-space: nowrap; }
+.date-strip-inner { display: flex; }
+
+.date-item {
+  width: 132rpx;
+  flex-shrink: 0;
+  margin-right: 14rpx;
+  padding: 18rpx 0;
+  border-radius: 22rpx;
+  text-align: center;
+  background: #fffdf7;
+  border: 1rpx solid rgba(16, 35, 29, 0.1);
+}
+
+.date-item.on {
+  background: linear-gradient(135deg, #0e704a, #14855a);
+  border-color: transparent;
+  color: #f8fff2;
+}
+
+.date-week { font-size: 22rpx; color: #5f7068; }
+.date-day { margin: 6rpx 0; font-size: 38rpx; font-weight: 800; }
+.date-month { font-size: 20rpx; color: #8d9993; }
+
+.date-item.on .date-week,
+.date-item.on .date-month { color: rgba(248, 255, 242, 0.78); }
+.date-item.on .date-day { color: #f8fff2; }
+
+/* 时段表 */
+.slot-row { display: flex; padding: 16rpx 0; border-bottom: 1rpx solid rgba(16, 35, 29, 0.07); }
+.slot-row:last-child { border-bottom: none; }
+
+.slot-time {
+  width: 108rpx;
+  flex-shrink: 0;
+  padding-top: 6rpx;
+  text-align: center;
+}
+
+.slot-time-main { font-size: 27rpx; font-weight: 800; }
+.slot-time-sub { font-size: 20rpx; color: #8d9993; }
+
+.slot-prime {
+  display: inline-block;
+  margin-top: 6rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 999rpx;
+  background: rgba(240, 190, 73, 0.24);
+  color: #7d5a12;
+  font-size: 18rpx;
+  font-weight: 700;
+}
+
+.slot-cells { flex: 1; display: flex; flex-wrap: wrap; }
+
+.slot-cell {
+  width: calc(33.33% - 12rpx);
+  margin: 6rpx;
+  padding: 14rpx 6rpx;
+  border-radius: 18rpx;
+  text-align: center;
+  background: rgba(14, 112, 74, 0.08);
+  border: 2rpx solid rgba(14, 112, 74, 0.14);
+}
+
+.slot-cell.off {
+  background: rgba(16, 35, 29, 0.05);
+  border-color: transparent;
+  opacity: 0.55;
+}
+
+.slot-cell.picked {
+  background: linear-gradient(135deg, #0e704a, #14855a);
+  border-color: #0e704a;
+}
+
+.slot-cell.picked .cell-name,
+.slot-cell.picked .cell-price { color: #f8fff2; }
+
+.cell-name { font-size: 23rpx; font-weight: 700; }
+.cell-price { margin-top: 2rpx; font-size: 20rpx; color: #0e704a; }
+
+.slot-empty {
+  width: 100%;
+  padding: 14rpx 0;
+  text-align: center;
+  color: #a0aca5;
+  font-size: 22rpx;
+}
+
+.rule {
+  position: relative;
+  padding: 10rpx 0 10rpx 26rpx;
+  font-size: 24rpx;
+  line-height: 1.6;
+  color: #3f4f47;
+}
+
+.rule::before {
+  content: "";
+  position: absolute;
+  left: 4rpx;
+  top: 22rpx;
+  width: 8rpx;
+  height: 8rpx;
+  border-radius: 50%;
+  background: #6bc5d2;
+}
+
+/* 结算条 */
+/* 预约页本身带自定义 tabBar，结算条需上抬一个 tabBar 的高度避免遮挡 */
+.bottom-bar { bottom: calc(112rpx + env(safe-area-inset-bottom)); }
+
+.bar-inner { display: flex; align-items: center; }
+.bar-info { flex: 1; min-width: 0; }
+.bar-title { font-size: 27rpx; font-weight: 800; }
+.bar-sub { margin-top: 4rpx; font-size: 21rpx; color: #5f7068; }
+.bar-warn { margin-top: 4rpx; font-size: 21rpx; color: #8d382b; }
+.bar-right { display: flex; align-items: center; }
+.bar-amount { margin-right: 16rpx; font-size: 38rpx; font-weight: 800; color: #0e704a; }
+
+/* 弹层 */
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sheet-body { margin-top: 20rpx; }
+
+.srow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12rpx 0;
+}
+
+.switch-row { display: flex; align-items: center; justify-content: space-between; padding: 12rpx 0; }
+.switch-main { flex: 1; min-width: 0; padding-right: 20rpx; }
+
+.remark-box { margin-top: 16rpx; }
+
+.remark-input {
+  margin-top: 10rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 18rpx;
+  background: rgba(16, 35, 29, 0.05);
+  font-size: 25rpx;
+}
+
+.amount-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 24rpx 0 20rpx;
+}
+
+.amount-value { font-size: 48rpx; font-weight: 800; color: #0e704a; }

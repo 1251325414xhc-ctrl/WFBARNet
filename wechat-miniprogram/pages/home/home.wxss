@@ -1,0 +1,134 @@
+.hero-flex {
+  display: flex;
+  align-items: center;
+}
+
+.hero-left { flex: 1; min-width: 0; }
+
+.hero-ring {
+  width: 220rpx;
+  height: 220rpx;
+  margin-left: 12rpx;
+  flex-shrink: 0;
+}
+
+.hero-foot {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 24rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid rgba(248, 255, 242, 0.22);
+}
+
+.hero-foot-left { display: flex; align-items: baseline; }
+.hero-level { font-size: 30rpx; font-weight: 800; }
+.hero-delta { margin-left: 14rpx; font-size: 23rpx; color: #b6e95e; }
+.hero-foot-right { font-size: 23rpx; color: rgba(248, 255, 242, 0.82); }
+
+/* 快捷入口 */
+.quick {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 20rpx -8rpx 0;
+}
+
+.quick-item {
+  width: calc(50% - 16rpx);
+  margin: 8rpx;
+  padding: 24rpx 20rpx;
+  border-radius: 26rpx;
+  background: #fffdf7;
+  border: 1rpx solid rgba(16, 35, 29, 0.1);
+  box-shadow: 0 14rpx 34rpx rgba(7, 61, 49, 0.08);
+}
+
+.quick-ico {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 18rpx;
+  margin-bottom: 16rpx;
+}
+
+.quick-ico--court { background: linear-gradient(135deg, #0e704a, #3fa06d); }
+.quick-ico--sky { background: linear-gradient(135deg, #2f9fb0, #6bc5d2); }
+.quick-ico--gold { background: linear-gradient(135deg, #d79b25, #f0be49); }
+.quick-ico--coral { background: linear-gradient(135deg, #d4633f, #ee705d); }
+
+.quick-label { font-size: 29rpx; font-weight: 800; }
+.quick-desc { margin-top: 4rpx; font-size: 22rpx; color: #5f7068; }
+
+/* 预约行 */
+.booking-line {
+  display: flex;
+  align-items: center;
+}
+
+.booking-time {
+  width: 176rpx;
+  padding: 18rpx 0;
+  border-radius: 20rpx;
+  text-align: center;
+  background: rgba(14, 112, 74, 0.08);
+}
+
+.booking-day { font-size: 24rpx; font-weight: 800; color: #0e704a; }
+.booking-clock { margin-top: 6rpx; font-size: 22rpx; color: #3d5b4d; }
+
+.booking-info { flex: 1; min-width: 0; padding: 0 18rpx; }
+.booking-amount { font-size: 30rpx; font-weight: 800; }
+
+/* 球速 */
+.speed-row {
+  display: flex;
+  margin: 20rpx -8rpx 0;
+}
+
+.speed-cell {
+  flex: 1;
+  margin: 0 8rpx;
+  padding: 20rpx;
+  border-radius: 22rpx;
+  background: rgba(14, 112, 74, 0.06);
+}
+
+.speed-value { margin-top: 6rpx; font-size: 44rpx; font-weight: 800; color: #0e704a; }
+
+/* 统计 */
+.stat-row {
+  display: flex;
+  margin-top: 18rpx;
+  padding-top: 18rpx;
+  border-top: 1rpx solid rgba(16, 35, 29, 0.08);
+}
+
+.stat-cell { flex: 1; text-align: center; }
+.stat-value { font-size: 36rpx; font-weight: 800; }
+.stat-label { margin-top: 4rpx; font-size: 22rpx; color: #5f7068; }
+
+/* 建议 */
+.tip-box {
+  margin-top: 14rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 20rpx;
+  background: linear-gradient(135deg, rgba(238, 112, 93, 0.12), rgba(240, 190, 73, 0.12));
+  border: 1rpx solid rgba(238, 112, 93, 0.18);
+  font-size: 25rpx;
+  line-height: 1.6;
+}
+
+.venue-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 12rpx 0;
+}
+
+.foot-note {
+  margin-top: 26rpx;
+  padding: 0 8rpx;
+  color: #7d8b83;
+  font-size: 22rpx;
+  line-height: 1.6;
+}

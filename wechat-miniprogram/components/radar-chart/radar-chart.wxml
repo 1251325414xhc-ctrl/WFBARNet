@@ -1,0 +1,9 @@
+<view class="radar">
+  <canvas type="2d" id="radar" class="radar-canvas"></canvas>
+  <view class="radar-fallback" wx:if="{{failed}}">
+    <view class="radar-fb-row" wx:for="{{dimensions}}" wx:key="name">
+      <text>{{item.name}}</text>
+      <text>{{item.score}} / 基准 {{item.benchmark}}</text>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,205 @@
+<view class="page page--tab">
+  <view class="wrap">
+
+    <view class="hero rise">
+      <view class="hero-inner">
+        <view class="profile-row">
+          <view class="avatar">{{user.avatarText}}</view>
+          <view class="profile-main">
+            <view class="profile-name">{{user.name}}</view>
+            <view class="profile-sub">{{user.phone}} · {{user.coach}}</view>
+            <view class="hero-pills">
+              <view class="hero-pill">{{user.memberLevel}}</view>
+              <view class="hero-pill">{{stats.level}}</view>
+            </view>
+          </view>
+        </view>
+        <view class="wallet-row">
+          <view class="wallet-cell">
+            <view class="wallet-value num">{{user.balance}}</view>
+            <view class="wallet-label">账户余额（元）</view>
+          </view>
+          <view class="wallet-cell">
+            <view class="wallet-value num">{{user.points}}</view>
+            <view class="wallet-label">积分</view>
+          </view>
+          <view class="wallet-cell">
+            <view class="wallet-value num">{{stats.percentile}}%</view>
+            <view class="wallet-label">场馆同级别</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 训练数据 -->
+    <view class="card rise-1">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">My Data</text>
+          <view class="card-title">我的训练数据</view>
+        </view>
+        <text class="card-more" bindtap="goPerformance">整体表现 ></text>
+      </view>
+      <view class="metric-grid">
+        <view class="metric">
+          <view class="metric-label">分析次数</view>
+          <view class="metric-value num">{{stats.sessions}}</view>
+          <view class="metric-hint">已生成报告的回合</view>
+        </view>
+        <view class="metric">
+          <view class="metric-label">回合总时长</view>
+          <view class="metric-value num">{{stats.durationText}}</view>
+          <view class="metric-hint">有效回合时间</view>
+        </view>
+        <view class="metric">
+          <view class="metric-label">累计跑动</view>
+          <view class="metric-value num">{{stats.distanceText}}</view>
+          <view class="metric-hint">标准球场坐标累计</view>
+        </view>
+        <view class="metric">
+          <view class="metric-label">平均评分</view>
+          <view class="metric-value num">{{stats.averageScore}}</view>
+          <view class="metric-hint">最高 {{stats.bestScore}} 分</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 功能列表 -->
+    <view class="card rise-1">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Services</text>
+          <view class="card-title">常用功能</view>
+        </view>
+      </view>
+      <view class="list">
+        <view class="list-item" bindtap="goOrders">
+          <view class="li-main">
+            <view class="li-title">我的预约</view>
+            <view class="li-sub">订单、支付、取消与开台</view>
+          </view>
+          <view class="li-arrow"></view>
+        </view>
+        <view class="list-item" bindtap="goRecords">
+          <view class="li-main">
+            <view class="li-title">训练记录</view>
+            <view class="li-sub">全部回合与报告</view>
+          </view>
+          <view class="li-arrow"></view>
+        </view>
+        <view class="list-item" bindtap="goAnalysis">
+          <view class="li-main">
+            <view class="li-title">上传视频分析</view>
+            <view class="li-sub">相册导入或现场录制</view>
+          </view>
+          <view class="li-arrow"></view>
+        </view>
+        <view class="list-item" bindtap="goReport">
+          <view class="li-main">
+            <view class="li-title">最近一份报告</view>
+            <view class="li-sub">六维评分、热区与训练计划</view>
+          </view>
+          <view class="li-arrow"></view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 商家端 -->
+    <view class="card merchant-card rise-2" bindtap="goMerchant">
+      <view class="merchant-left">
+        <text class="eyebrow">Merchant</text>
+        <view class="h3">我是场馆商家</view>
+        <view class="row-note">场地管理、预约排期、客户分析任务与经营数据</view>
+      </view>
+      <view class="merchant-right">
+        <view class="merchant-btn">进入工作台</view>
+      </view>
+    </view>
+
+    <!-- 场馆 -->
+    <view class="card rise-2">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Venue</text>
+          <view class="card-title">常用场馆</view>
+          <view class="card-sub">{{venue.name}} · {{venue.branch}}</view>
+        </view>
+      </view>
+      <view class="list">
+        <view class="list-item" bindtap="copyVenue">
+          <view class="li-main">
+            <view class="li-title">场馆地址</view>
+            <view class="li-sub">{{venue.address}}</view>
+          </view>
+          <text class="card-more">复制</text>
+        </view>
+        <view class="list-item">
+          <view class="li-main">
+            <view class="li-title">联系电话</view>
+            <view class="li-sub">{{venue.phone}}</view>
+          </view>
+        </view>
+        <view class="list-item">
+          <view class="li-main">
+            <view class="li-title">营业时间</view>
+            <view class="li-sub">{{venue.openTime}} - {{venue.closeTime}}</view>
+          </view>
+        </view>
+        <view class="list-item">
+          <view class="li-main">
+            <view class="li-title">预约规则</view>
+            <view class="li-sub">{{venue.notice}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 设置 -->
+    <view class="card rise-3">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Settings</text>
+          <view class="card-title">设置</view>
+        </view>
+      </view>
+      <view class="switch-row">
+        <view class="switch-main">
+          <view class="li-title">训练提醒</view>
+          <view class="li-sub">开赛前 1 小时提醒</view>
+        </view>
+        <switch checked="{{settings.remind}}" color="#0e704a" data-key="remind" bindchange="onSettingChange" />
+      </view>
+      <view class="switch-row">
+        <view class="switch-main">
+          <view class="li-title">报告推送</view>
+          <view class="li-sub">分析完成后推送到服务通知</view>
+        </view>
+        <switch checked="{{settings.pushReport}}" color="#0e704a" data-key="pushReport" bindchange="onSettingChange" />
+      </view>
+      <view class="switch-row">
+        <view class="switch-main">
+          <view class="li-title">公制单位</view>
+          <view class="li-sub">距离用米，速度用米每秒</view>
+        </view>
+        <switch checked="{{settings.metric}}" color="#0e704a" data-key="metric" bindchange="onSettingChange" />
+      </view>
+      <view class="divider"></view>
+      <view class="list-item" bindtap="switchRole">
+        <view class="li-main">
+          <view class="li-title">商家端入口</view>
+          <view class="li-sub">切换身份进入场馆工作台</view>
+        </view>
+        <view class="li-arrow"></view>
+      </view>
+      <view class="list-item" bindtap="showAbout">
+        <view class="li-main">
+          <view class="li-title">关于羽迹智能</view>
+          <view class="li-sub">v{{version}} · 分析管线说明</view>
+        </view>
+        <view class="li-arrow"></view>
+      </view>
+    </view>
+
+    <view class="foot-note">WFBARNet 智能分析 · 报告结果仅供训练复盘参考</view>
+  </view>
+</view>

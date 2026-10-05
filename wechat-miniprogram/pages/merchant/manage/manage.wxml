@@ -1,0 +1,144 @@
+<view class="page">
+  <view class="m-nav">
+    <view class="m-nav-item" bindtap="goWorkbench">工作台</view>
+    <view class="m-nav-item" bindtap="goCourts">场地管理</view>
+    <view class="m-nav-item on">预约管理</view>
+  </view>
+
+  <view class="wrap" wx:if="{{stats}}">
+
+    <view class="metric-grid">
+      <view class="metric">
+        <view class="metric-label">当日预约</view>
+        <view class="metric-value num">{{stats.count}}</view>
+        <view class="metric-hint">不含已取消</view>
+      </view>
+      <view class="metric">
+        <view class="metric-label">当日营收</view>
+        <view class="metric-value num">{{stats.revenueText}}</view>
+        <view class="metric-hint">含未支付订单</view>
+      </view>
+      <view class="metric">
+        <view class="metric-label">场地使用率</view>
+        <view class="metric-value num">{{stats.utilization}}</view>
+        <view class="metric-hint">按开放场地计算</view>
+      </view>
+      <view class="metric">
+        <view class="metric-label">待支付</view>
+        <view class="metric-value num">{{stats.pending}}</view>
+        <view class="metric-hint">需催付</view>
+      </view>
+    </view>
+
+    <view class="date-strip scroll-x">
+      <scroll-view scroll-x class="date-scroll">
+        <view class="date-strip-inner">
+          <view class="date-item {{activeDate === item.key ? 'on' : ''}}"
+            wx:for="{{dates}}" wx:key="key" data-key="{{item.key}}" bindtap="onDateTap">
+            <view class="date-week">{{item.week}}</view>
+            <view class="date-day num">{{item.day}}</view>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+
+    <view class="seg" style="margin-top:24rpx">
+      <view class="seg-item {{active === item.key ? 'on' : ''}}" wx:for="{{tabs}}" wx:key="key"
+        data-key="{{item.key}}" bindtap="onTabTap">{{item.label}}</view>
+    </view>
+
+    <!-- 列表视图 -->
+    <block wx:if="{{active === 'list'}}">
+      <view class="card">
+        <view class="card-hd">
+          <view>
+            <text class="eyebrow">Bookings</text>
+            <view class="card-title">预约明细</view>
+          </view>
+        </view>
+        <view class="chips scroll-x">
+          <scroll-view scroll-x class="chips-scroll">
+            <view class="chip {{activeFilter === item.key ? 'on' : ''}}" wx:for="{{filters}}" wx:key="key"
+              data-key="{{item.key}}" bindtap="onFilterTap">{{item.label}}</view>
+          </scroll-view>
+        </view>
+
+        <block wx:for="{{bookings}}" wx:key="id">
+          <view class="bk" wx:if="{{activeFilter === 'all' || activeFilter === item.status}}">
+            <view class="bk-head">
+              <view class="court-badge">{{item.courtName}}</view>
+              <view class="bk-main">
+                <view class="li-title">{{item.timeText}} · {{item.durationMinutes}} 分钟</view>
+                <view class="li-sub">{{item.customer}} · {{item.phone}} · {{item.channel}}</view>
+              </view>
+              <view class="bk-right">
+                <text class="badge badge--{{item.statusClass}}">{{item.statusText}}</text>
+                <view class="strong small num" style="margin-top:8rpx">{{item.amountText}}</view>
+              </view>
+            </view>
+            <view class="bk-actions">
+              <button class="btn btn--sm btn--ghost" data-phone="{{item.phone}}" bindtap="callCustomer">联系顾客</button>
+              <button class="btn btn--sm btn--primary" wx:if="{{item.canCheckin}}" data-id="{{item.id}}"
+                data-action="checkin" bindtap="act">扫码开台</button>
+              <button class="btn btn--sm" wx:if="{{item.canFinish}}" data-id="{{item.id}}"
+                data-action="finish" bindtap="act">标记完成</button>
+              <button class="btn btn--sm btn--danger" wx:if="{{item.canRefund}}" data-id="{{item.id}}"
+                data-action="refund" bindtap="act">退款</button>
+            </view>
+            <view class="bk-note" wx:if="{{item.remark}}">备注：{{item.remark}}</view>
+          </view>
+        </block>
+
+        <view class="empty" wx:if="{{bookings.length === 0}}">当日暂无预约</view>
+      </view>
+    </block>
+
+    <!-- 排期视图 -->
+    <block wx:else>
+      <view class="card">
+        <view class="card-hd">
+          <view>
+            <text class="eyebrow">Schedule Board</text>
+            <view class="card-title">场地排期表</view>
+            <view class="card-sub">横向滑动查看全部场地，红色为已占用</view>
+          </view>
+        </view>
+
+        <view class="sched">
+          <view class="sched-time">
+            <view class="sched-head">时间</view>
+            <view class="sched-time-cell num" wx:for="{{times}}" wx:key="*this">{{item}}</view>
+          </view>
+          <scroll-view scroll-x class="sched-scroll">
+            <view class="sched-courts">
+              <view class="sched-col" wx:for="{{columns}}" wx:key="id">
+                <view class="sched-head">{{item.name}}</view>
+                <view class="sched-cell {{cell.state}}" wx:for="{{item.cells}}" wx:for-item="cell" wx:key="startLabel">
+                  <text class="sched-cell-text">{{cell.label}}</text>
+                </view>
+              </view>
+            </view>
+          </scroll-view>
+        </view>
+
+        <view class="legend">
+          <view class="legend-item"><view class="legend-dot free"></view><text>空闲</text></view>
+          <view class="legend-item"><view class="legend-dot busy"></view><text>已占用</text></view>
+        </view>
+      </view>
+
+      <view class="card">
+        <view class="card-hd">
+          <view>
+            <text class="eyebrow">Ops Tips</text>
+            <view class="card-title">现场运营提醒</view>
+          </view>
+        </view>
+        <view class="rule">顾客到场后扫码开台，系统会把该时段自动转为使用中。</view>
+        <view class="rule">如需临时关闭某片场地，可在「场地管理」打开维护开关，已产生的订单不受影响。</view>
+        <view class="rule">智能机位会在开台后自动录制，分析完成后报告推送给顾客。</view>
+      </view>
+    </block>
+
+  </view>
+</view>

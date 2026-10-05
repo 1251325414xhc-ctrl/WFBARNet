@@ -569,7 +569,7 @@ class AnalysisControllerCourtRuntimeTest(unittest.TestCase):
         controller._selected_video_path = "match.mp4"
         controller._append_player_distance_summary = lambda payload: None
         controller._set_idle_state = lambda: None
-        controller._maybe_start_stopped_report = lambda stopped: None
+        controller._maybe_auto_export_report = lambda stopped: None
         starts: list[dict] = []
         controller._start_playback = lambda **kwargs: starts.append(kwargs)
 

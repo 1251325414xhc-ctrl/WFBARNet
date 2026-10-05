@@ -1,0 +1,60 @@
+<view class="page">
+  <view class="wrap">
+
+    <view class="seg">
+      <view class="seg-item {{active === item.key ? 'on' : ''}}" wx:for="{{filters}}" wx:key="key"
+        data-key="{{item.key}}" bindtap="onFilterTap">{{item.label}}</view>
+    </view>
+
+    <view class="card card--flat" wx:if="{{list.length === 0}}">
+      <view class="empty">
+        <view class="empty-badge"></view>
+        <view>还没有预约记录</view>
+        <button class="btn btn--primary" style="margin-top:24rpx" bindtap="goBooking">去预约场地</button>
+      </view>
+    </view>
+
+    <block wx:for="{{list}}" wx:key="id">
+      <view class="order" wx:if="{{active === 'all' || active === item.status || (active === 'paid' && item.status === 'checked')}}">
+        <view class="order-head">
+          <view class="order-code">订单号 {{item.code}}</view>
+          <text class="badge badge--{{item.statusClass}}">{{item.statusText}}</text>
+        </view>
+
+        <view class="order-body">
+          <view class="order-court">
+            <view class="court-name">{{item.courtName}}</view>
+            <view class="court-time">{{item.startLabel}} - {{item.endLabel}}</view>
+          </view>
+          <view class="order-main">
+            <view class="li-title">{{item.relative}} {{item.dateLabel}} {{item.weekLabel}}</view>
+            <view class="li-sub">{{item.durationMinutes}} 分钟 · {{item.channel}}</view>
+            <view class="tag-row">
+              <text class="tag tag--court" wx:if="{{item.withAnalysis}}">含智能分析</text>
+              <text class="tag" wx:if="{{item.coach}}">{{item.coach}}</text>
+              <text class="tag tag--sky" wx:if="{{item.remark}}">{{item.remark}}</text>
+            </view>
+          </view>
+          <view class="order-amount">{{item.amountText}}</view>
+        </view>
+
+        <view class="order-actions">
+          <button class="btn btn--sm btn--ghost" wx:if="{{item.withAnalysis && item.status === 'finished'}}"
+            data-report="{{item.reportId}}" bindtap="openReport">查看报告</button>
+          <button class="btn btn--sm btn--danger" wx:if="{{item.canCancel}}"
+            data-id="{{item.id}}" bindtap="cancel">取消预约</button>
+          <button class="btn btn--sm" wx:if="{{item.canFinish}}"
+            data-id="{{item.id}}" bindtap="finish">完成</button>
+          <button class="btn btn--sm btn--primary" wx:if="{{item.canPay}}"
+            data-id="{{item.id}}" bindtap="pay">去支付</button>
+          <button class="btn btn--sm btn--primary" wx:if="{{item.canRebook}}" bindtap="goBooking">再次预约</button>
+        </view>
+      </view>
+    </block>
+
+    <view class="foot-note" wx:if="{{list.length}}">
+      共 {{counts.all}} 条预约 · 待支付 {{counts.pending}} · 已完成 {{counts.finished}}
+    </view>
+
+  </view>
+</view>

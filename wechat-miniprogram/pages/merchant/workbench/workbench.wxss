@@ -1,0 +1,24 @@
+.quick {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 20rpx -8rpx 0;
+}
+
+.quick-item {
+  width: calc(50% - 16rpx);
+  margin: 8rpx;
+  padding: 24rpx 20rpx;
+  border-radius: 26rpx;
+  background: #fffdf7;
+  border: 1rpx solid rgba(16, 35, 29, 0.1);
+  box-shadow: 0 14rpx 34rpx rgba(7, 61, 49, 0.08);
+}
+
+.quick-ico { width: 56rpx; height: 56rpx; border-radius: 18rpx; margin-bottom: 16rpx; }
+.quick-ico--court { background: linear-gradient(135deg, #0e704a, #3fa06d); }
+.quick-ico--sky { background: linear-gradient(135deg, #2f9fb0, #6bc5d2); }
+
+.quick-label { font-size: 29rpx; font-weight: 800; }
+.quick-desc { margin-top: 4rpx; font-size: 22rpx; color: #5f7068; }
+
+.list-item .li-main { padding-left: 18rpx; }

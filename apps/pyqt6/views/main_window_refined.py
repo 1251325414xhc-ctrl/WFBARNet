@@ -25,6 +25,9 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMenu,
     QComboBox,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
     QSizePolicy,
     QPushButton,
     QProgressBar,
@@ -694,7 +697,10 @@ class ReportPreviewWidget(QWidget):
     def __init__(self, project_root: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._project_root = project_root
+        # Exported reports now live in outputs/reports with timestamped names;
+        # this legacy path is only kept as a startup fallback.
         self._report_output_path = project_root / "assets" / "dist" / "index.html"
+        self._reports_dir = project_root / "outputs" / "reports"
         self._template_path = project_root / "assets" / "report_template" / "report-template.html"
         self._current_report_path: Path | None = None
         self._theme_name = "office_light"
@@ -717,15 +723,44 @@ class ReportPreviewWidget(QWidget):
         self.btn_refresh_report.setObjectName("btnRefreshReport")
         self.btn_open_report = QPushButton("在浏览器中打开")
         self.btn_open_report.setObjectName("btnOpenReport")
+        self.btn_open_report_folder = QPushButton("打开文件夹")
+        self.btn_open_report_folder.setObjectName("btnOpenReportFolder")
+        self.btn_open_report_folder.setToolTip("打开当前报告所在目录")
+        self.btn_open_report_data = QPushButton("打开报告数据")
+        self.btn_open_report_data.setObjectName("btnOpenReportData")
+        self.btn_open_report_data.setToolTip("打开与报告同名的 JSON 数据文件")
         self.btn_refresh_report.clicked.connect(self.reload)
         self.btn_open_report.clicked.connect(self.open_external)
+        self.btn_open_report_folder.clicked.connect(self.open_containing_folder)
+        self.btn_open_report_data.clicked.connect(self.open_report_data)
 
         header.addWidget(title)
         header.addWidget(self.report_path_label, stretch=1)
         header.addWidget(self.backend_label)
         header.addWidget(self.btn_refresh_report)
         header.addWidget(self.btn_open_report)
+        header.addWidget(self.btn_open_report_folder)
+        header.addWidget(self.btn_open_report_data)
         layout.addLayout(header)
+
+        # Export history strip: reopened reports, newest first.
+        self._history_entries: list[dict[str, object]] = []
+        self._history_list = QListWidget()
+        self._history_list.setObjectName("reportHistoryList")
+        self._history_list.setMaximumHeight(96)
+        self._history_list.setToolTip("点击可重新打开历史导出的报告")
+        self._history_list.itemDoubleClicked.connect(self._open_history_entry)
+        self._history_panel = QWidget()
+        self._history_panel.setObjectName("reportHistoryPanel")
+        self._history_panel.setVisible(False)
+        history_layout = QVBoxLayout(self._history_panel)
+        history_layout.setContentsMargins(0, 0, 0, 0)
+        history_layout.setSpacing(4)
+        history_title = QLabel("导出历史")
+        history_title.setObjectName("sectionNote")
+        history_layout.addWidget(history_title)
+        history_layout.addWidget(self._history_list)
+        layout.addWidget(self._history_panel)
 
         if QWebEngineView is not None:
             self.viewer = QWebEngineView(self)
@@ -791,13 +826,27 @@ class ReportPreviewWidget(QWidget):
         self.viewer.page().runJavaScript(script)
 
     def load_template(self) -> None:
+        latest = self._latest_exported_report()
+        if latest is not None:
+            self.load_report_file(latest)
+            return
         path = self._report_output_path if self._report_output_path.exists() else self._template_path
         self.load_report_file(path)
+
+    def _latest_exported_report(self) -> Path | None:
+        """Return the most recently modified exported report, if any."""
+        if not self._reports_dir.is_dir():
+            return None
+        candidates = [path for path in self._reports_dir.glob("*.html") if path.is_file()]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: item.stat().st_mtime)
 
     def load_report_file(self, path: Path | str) -> None:
         report_path = Path(path)
         self._current_report_path = report_path if report_path.exists() else None
         self._update_path_label(report_path)
+        self.set_export_actions_enabled(True)
         if not report_path.exists():
             self._set_fallback_html(f"报告模板不存在：{report_path}")
             return
@@ -808,9 +857,32 @@ class ReportPreviewWidget(QWidget):
         else:
             self.viewer.setHtml(self._fallback_preview_html(report_path))
 
+    def set_export_history(self, entries: list[dict[str, object]]) -> None:
+        """Populate the export history list with previously saved reports."""
+        self._history_entries = [dict(item) for item in entries if isinstance(item, dict)]
+        self._history_list.clear()
+        for entry in self._history_entries:
+            path = Path(str(entry.get("path") or ""))
+            if not path.is_file():
+                continue
+            summary = entry.get("summary")
+            level = ""
+            if isinstance(summary, dict):
+                level = str(summary.get("level_label") or "")
+            stamp = str(entry.get("exported_at") or "").replace("T", " ")
+            label = f"{stamp}  {path.stem}"
+            if level:
+                label += f"  [{level}]"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, str(path))
+            item.setToolTip(str(path))
+            self._history_list.addItem(item)
+        self._history_panel.setVisible(bool(self._history_entries))
+
     def load_report_html(self, html: str, base_path: Path | str | None = None) -> None:
         base = Path(base_path) if base_path else self._template_path.parent
         self._current_report_path = None
+        self.set_export_actions_enabled(False)
         self.report_path_label.setText("当前报告：内存预览")
         if self._uses_web_engine:
             self.viewer.setHtml(html, self._directory_url(base))
@@ -828,6 +900,48 @@ class ReportPreviewWidget(QWidget):
             return
         self._ensure_report_assets(self._current_report_path)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._current_report_path.resolve())))
+
+    def open_containing_folder(self) -> None:
+        if self._current_report_path is None or not self._current_report_path.exists():
+            return
+        QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(self._current_report_path.resolve().parent))
+        )
+
+    def open_report_data(self) -> None:
+        """Open the JSON sidecar written next to the current report."""
+        if self._current_report_path is None or not self._current_report_path.exists():
+            return
+        sidecar = self._current_report_path.with_name(
+            self._current_report_path.stem + ".report.json"
+        )
+        if not sidecar.is_file():
+            QMessageBox.information(
+                self,
+                "报告数据",
+                "当前报告没有对应的 JSON 数据文件。\n"
+                "请使用「导出报告」重新导出一次。",
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(sidecar.resolve())))
+
+    def current_report_path(self) -> Path | None:
+        return self._current_report_path
+
+    def _open_history_entry(self, item: QListWidgetItem) -> None:
+        path = Path(str(item.data(Qt.ItemDataRole.UserRole) or ""))
+        if path.is_file():
+            self.load_report_file(path)
+        else:
+            QMessageBox.warning(self, "报告历史", f"报告文件已不存在：\n{path}")
+
+    def set_export_actions_enabled(self, enabled: bool) -> None:
+        has_report = self._current_report_path is not None and self._current_report_path.exists()
+        state = bool(enabled and has_report)
+        self.btn_open_report.setEnabled(state)
+        self.btn_open_report_folder.setEnabled(state)
+        self.btn_open_report_data.setEnabled(state)
+        self.btn_refresh_report.setEnabled(state)
 
     def _configure_web_engine(self) -> None:
         if QWebEngineSettings is None:
@@ -893,6 +1007,7 @@ class MainWindow(QMainWindow):
     reportApiSettingsApplyRequested = pyqtSignal(dict)
     modelSwitchesChanged = pyqtSignal(bool, bool)
     debugCsvChanged = pyqtSignal(bool)
+    analysisQualityChanged = pyqtSignal(str)
     manualCourtCalibrationRequested = pyqtSignal()
     batchFolderBrowseRequested = pyqtSignal()
     batchRallySelectionChanged = pyqtSignal(str)
@@ -1748,33 +1863,60 @@ class MainWindow(QMainWindow):
         debug_note.setObjectName("sectionNote")
         debug_note.setWordWrap(True)
 
-        report_api_label = QLabel("报告 API")
+        perf_label = QLabel("分析性能")
+        perf_label.setObjectName("styleLabel")
+        self.analysis_quality_combo = QComboBox()
+        self.analysis_quality_combo.setObjectName("modelPathEdit")
+        self.analysis_quality_combo.setAccessibleName("分析性能档位")
+        # Keys must stay in sync with hardware_profile.QUALITY_CHOICES; the
+        # controller validates incoming values against that list.
+        self.analysis_quality_combo.addItem("自动（按显卡适配，推荐）", "auto")
+        self.analysis_quality_combo.addItem("流畅（牺牲精度换速度）", "fast")
+        self.analysis_quality_combo.addItem("均衡", "balanced")
+        self.analysis_quality_combo.addItem("精确（高精度，可能卡顿）", "precise")
+        self.analysis_quality_combo.setToolTip(
+            "自动模式会检测显卡并根据显存、算力选择合适的分辨率。\n"
+            "手动档位用于覆盖自动结果：分辨率越高越准，但每帧耗时越长。\n"
+            "切换后需停止当前分析并重新开始才会生效。"
+        )
+        self.analysis_quality_note = QLabel("")
+        self.analysis_quality_note.setObjectName("sectionNote")
+        self.analysis_quality_note.setWordWrap(True)
+        self.analysis_quality_note.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+
+        report_api_label = QLabel("大模型服务")
         report_api_label.setObjectName("styleLabel")
-        self.report_api_enabled = ToggleSwitch("启用报告模型 API")
+        self.report_api_enabled = ToggleSwitch("启用大模型报告分析")
         self.report_api_enabled.setChecked(False)
         self.report_api_enabled.toggled.connect(self._update_report_api_fields_enabled)
         self.report_api_provider_combo = QComboBox()
         self.report_api_provider_combo.setObjectName("modelPathEdit")
-        self.report_api_provider_combo.setAccessibleName("报告 API 服务商")
+        self.report_api_provider_combo.setAccessibleName("大模型服务商")
+        self.report_api_provider_combo.addItem("本地 Ollama（无需 API Key）", "ollama_local")
         self.report_api_provider_combo.addItem("阿里百炼 OpenAI 兼容", "bailian_openai")
         self.report_api_endpoint_edit = QLineEdit()
         self.report_api_endpoint_edit.setObjectName("modelPathEdit")
-        self.report_api_endpoint_edit.setAccessibleName("报告 API 地址")
-        self.report_api_endpoint_edit.setPlaceholderText("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+        self.report_api_endpoint_edit.setAccessibleName("大模型 API 地址")
+        self.report_api_endpoint_edit.setPlaceholderText("http://127.0.0.1:11434/v1/chat/completions")
         self.report_api_model_edit = QLineEdit()
         self.report_api_model_edit.setObjectName("modelPathEdit")
-        self.report_api_model_edit.setAccessibleName("报告 API 模型")
-        self.report_api_model_edit.setPlaceholderText("qwen-plus")
+        self.report_api_model_edit.setAccessibleName("大模型名称")
+        self.report_api_model_edit.setPlaceholderText("qwen3:8b")
         self.report_api_key_edit = QLineEdit()
         self.report_api_key_edit.setObjectName("modelPathEdit")
         self.report_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.report_api_key_edit.setPlaceholderText("阿里百炼 API Key")
+        self.report_api_key_edit.setPlaceholderText("本地 Ollama 无需 API Key")
         self.report_api_key_edit.setAccessibleName("报告 API 密钥")
         self.btn_toggle_api_key = QPushButton("显示")
         self.btn_toggle_api_key.setObjectName("btnToggleApiKey")
         self.btn_toggle_api_key.setCheckable(True)
         self.btn_toggle_api_key.setAccessibleName("显示或隐藏 API 密钥")
         self.btn_toggle_api_key.toggled.connect(self._toggle_api_key_visibility)
+        self.report_api_provider_combo.currentIndexChanged.connect(
+            self._on_report_provider_changed
+        )
 
         settings_frame_layout.addWidget(pose_label, 0, 0)
         settings_frame_layout.addWidget(self.pose_model_enabled, 0, 1)
@@ -1784,32 +1926,38 @@ class MainWindow(QMainWindow):
         settings_frame_layout.addWidget(self.track_model_enabled, 1, 1)
         settings_frame_layout.addWidget(self.track_model_edit, 1, 2)
         settings_frame_layout.addWidget(self.btn_browse_track_model, 1, 3)
-        settings_frame_layout.addWidget(debug_label, 2, 0)
-        settings_frame_layout.addWidget(self.debug_csv_enabled, 2, 1)
-        settings_frame_layout.addWidget(debug_note, 2, 2, 1, 2)
-        settings_frame_layout.addWidget(report_api_label, 3, 0)
-        settings_frame_layout.addWidget(self.report_api_enabled, 3, 1)
-        settings_frame_layout.addWidget(self.report_api_provider_combo, 3, 2, 1, 2)
+        settings_frame_layout.addWidget(perf_label, 2, 0)
+        settings_frame_layout.addWidget(self.analysis_quality_combo, 2, 1)
+        settings_frame_layout.addWidget(self.analysis_quality_note, 2, 2, 1, 2)
+        settings_frame_layout.addWidget(debug_label, 3, 0)
+        settings_frame_layout.addWidget(self.debug_csv_enabled, 3, 1)
+        settings_frame_layout.addWidget(debug_note, 3, 2, 1, 2)
+        settings_frame_layout.addWidget(report_api_label, 4, 0)
+        settings_frame_layout.addWidget(self.report_api_enabled, 4, 1)
+        settings_frame_layout.addWidget(self.report_api_provider_combo, 4, 2, 1, 2)
         endpoint_label = QLabel("API 地址")
         endpoint_label.setBuddy(self.report_api_endpoint_edit)
-        settings_frame_layout.addWidget(endpoint_label, 4, 0)
-        settings_frame_layout.addWidget(self.report_api_endpoint_edit, 4, 1, 1, 3)
+        settings_frame_layout.addWidget(endpoint_label, 5, 0)
+        settings_frame_layout.addWidget(self.report_api_endpoint_edit, 5, 1, 1, 3)
         report_model_label = QLabel("模型")
         report_model_label.setBuddy(self.report_api_model_edit)
-        settings_frame_layout.addWidget(report_model_label, 5, 0)
-        settings_frame_layout.addWidget(self.report_api_model_edit, 5, 1, 1, 3)
-        api_key_label = QLabel("API 密钥")
+        settings_frame_layout.addWidget(report_model_label, 6, 0)
+        settings_frame_layout.addWidget(self.report_api_model_edit, 6, 1, 1, 3)
+        api_key_label = QLabel("API 密钥（云端）")
         api_key_label.setBuddy(self.report_api_key_edit)
-        settings_frame_layout.addWidget(api_key_label, 6, 0)
-        settings_frame_layout.addWidget(self.report_api_key_edit, 6, 1, 1, 2)
-        settings_frame_layout.addWidget(self.btn_toggle_api_key, 6, 3)
-        settings_frame_layout.addWidget(self.style_label, 7, 0)
-        settings_frame_layout.addWidget(self.style_btn, 7, 1, 1, 3, Qt.AlignmentFlag.AlignLeft)
+        settings_frame_layout.addWidget(api_key_label, 7, 0)
+        settings_frame_layout.addWidget(self.report_api_key_edit, 7, 1, 1, 2)
+        settings_frame_layout.addWidget(self.btn_toggle_api_key, 7, 3)
+        settings_frame_layout.addWidget(self.style_label, 8, 0)
+        settings_frame_layout.addWidget(self.style_btn, 8, 1, 1, 3, Qt.AlignmentFlag.AlignLeft)
         settings_frame_layout.setColumnStretch(2, 1)
 
         self.pose_model_enabled.stateChanged.connect(self._emit_model_switches_changed)
         self.track_model_enabled.stateChanged.connect(self._emit_model_switches_changed)
         self.debug_csv_enabled.toggled.connect(self.debugCsvChanged.emit)
+        self.analysis_quality_combo.currentIndexChanged.connect(
+            self._emit_analysis_quality_changed
+        )
 
         action_row = QHBoxLayout()
         action_row.addStretch(1)
@@ -2091,6 +2239,9 @@ class MainWindow(QMainWindow):
         if index >= 0:
             self.tabs.setCurrentIndex(index)
 
+    def set_report_export_history(self, entries: list[dict[str, object]]) -> None:
+        self.report_preview.set_export_history(entries)
+
     def _emit_batch_rally_selection(self, _index: int = -1) -> None:
         self.batchRallySelectionChanged.emit(self.selected_batch_rally_id())
 
@@ -2116,6 +2267,20 @@ class MainWindow(QMainWindow):
     def model_switches(self) -> tuple[bool, bool]:
         return self.pose_model_enabled.isChecked(), self.track_model_enabled.isChecked()
 
+    def analysis_quality(self) -> str:
+        value = self.analysis_quality_combo.currentData()
+        return str(value) if value else "auto"
+
+    def set_analysis_quality(self, quality: str) -> None:
+        index = self.analysis_quality_combo.findData(str(quality))
+        if index >= 0:
+            self.analysis_quality_combo.setCurrentIndex(index)
+
+    def set_analysis_preset_note(self, text: str) -> None:
+        """Show which hardware/preset the auto mode resolved to."""
+        self.analysis_quality_note.setText(str(text or ""))
+        self.analysis_quality_note.setToolTip(str(text or ""))
+
     def set_debug_csv_enabled(self, enabled: bool) -> None:
         self.debug_csv_enabled.blockSignals(True)
         self.debug_csv_enabled.setChecked(enabled)
@@ -2128,7 +2293,7 @@ class MainWindow(QMainWindow):
         self.report_api_enabled.blockSignals(True)
         self.report_api_enabled.setChecked(bool(settings.get("enabled")))
         self.report_api_enabled.blockSignals(False)
-        provider = str(settings.get("provider") or "bailian_openai")
+        provider = str(settings.get("provider") or "ollama_local")
         index = self.report_api_provider_combo.findData(provider)
         self.report_api_provider_combo.setCurrentIndex(index if index >= 0 else 0)
         self.report_api_endpoint_edit.setText(str(settings.get("endpoint") or ""))
@@ -2181,21 +2346,43 @@ class MainWindow(QMainWindow):
         pose_enabled, track_enabled = self.model_switches()
         self.modelSwitchesChanged.emit(pose_enabled, track_enabled)
 
+    def _emit_analysis_quality_changed(self, _index: int = -1) -> None:
+        self.analysisQualityChanged.emit(self.analysis_quality())
+
     def _toggle_api_key_visibility(self, visible: bool) -> None:
         self.report_api_key_edit.setEchoMode(
             QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
         )
         self.btn_toggle_api_key.setText("隐藏" if visible else "显示")
 
+    def _on_report_provider_changed(self, _index: int) -> None:
+        provider = str(self.report_api_provider_combo.currentData() or "ollama_local")
+        if provider == "ollama_local":
+            self.report_api_endpoint_edit.setText(
+                "http://127.0.0.1:11434/v1/chat/completions"
+            )
+            self.report_api_model_edit.setText("qwen3:8b")
+            self.report_api_key_edit.clear()
+        else:
+            self.report_api_endpoint_edit.setText(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+            )
+            self.report_api_model_edit.setText("qwen-plus")
+        self._update_report_api_fields_enabled(self.report_api_enabled.isChecked())
+
     def _update_report_api_fields_enabled(self, enabled: bool) -> None:
-        for widget in (
-            self.report_api_provider_combo,
-            self.report_api_endpoint_edit,
-            self.report_api_model_edit,
-            self.report_api_key_edit,
-            self.btn_toggle_api_key,
-        ):
-            widget.setEnabled(bool(enabled))
+        active = bool(enabled)
+        local_provider = (
+            str(self.report_api_provider_combo.currentData() or "") == "ollama_local"
+        )
+        self.report_api_provider_combo.setEnabled(active)
+        self.report_api_endpoint_edit.setEnabled(active)
+        self.report_api_model_edit.setEnabled(active)
+        self.report_api_key_edit.setEnabled(active and not local_provider)
+        self.btn_toggle_api_key.setEnabled(active and not local_provider)
+        self.report_api_key_edit.setPlaceholderText(
+            "本地 Ollama 无需 API Key" if local_provider else "阿里百炼 API Key"
+        )
 
     def show_video_frame(
         self,

@@ -8,12 +8,34 @@ import numpy as np
 import torch
 
 
+# TrackNetV3 downsamples three times (MaxPool2d) and upsamples three times
+# (interpolate scale_factor=2). Any input whose height or width is not a
+# multiple of 8 makes the skip-connection tensors misalign, which surfaces as
+# "Sizes of tensors must match except in dimension 1". Real-world phone
+# footage hits this constantly (854x480, 1280x720, 1920x1080 all fail), so
+# sizes are snapped to the nearest valid value before resizing.
+TRACK_SIZE_ALIGNMENT = 8
+
+
 @dataclass
 class TrackPreprocessMeta:
     orig_size: tuple[int, int]
     resized_size: tuple[int, int]
     scale_x: float
     scale_y: float
+
+
+def align_track_input_size(size: Tuple[int, int]) -> Tuple[int, int]:
+    """Snap (width, height) to multiples of 8, never shrinking below 8px."""
+    width, height = int(size[0]), int(size[1])
+    aligned_w = max(TRACK_SIZE_ALIGNMENT, int(round(width / TRACK_SIZE_ALIGNMENT)) * TRACK_SIZE_ALIGNMENT)
+    aligned_h = max(TRACK_SIZE_ALIGNMENT, int(round(height / TRACK_SIZE_ALIGNMENT)) * TRACK_SIZE_ALIGNMENT)
+    return aligned_w, aligned_h
+
+
+def is_track_input_size_valid(size: Tuple[int, int]) -> bool:
+    width, height = int(size[0]), int(size[1])
+    return width % TRACK_SIZE_ALIGNMENT == 0 and height % TRACK_SIZE_ALIGNMENT == 0
 
 
 def preprocess_track_window(
@@ -23,7 +45,7 @@ def preprocess_track_window(
 ) -> tuple[torch.Tensor, TrackPreprocessMeta]:
     if len(frames) != 3:
         raise ValueError("Track branch expects exactly 3 frames.")
-    in_w, in_h = input_size
+    in_w, in_h = align_track_input_size(input_size)
     orig_h, orig_w = frames[1].shape[:2]
     stacked = np.empty((9, in_h, in_w), dtype=np.uint8)
     for index, frame in enumerate(frames):
@@ -48,7 +70,7 @@ def preprocess_track_batch(
     if not batch_frames:
         raise ValueError("Batch is empty.")
 
-    in_w, in_h = input_size
+    in_w, in_h = align_track_input_size(input_size)
     batch_tensor = np.empty((len(batch_frames), 9, in_h, in_w), dtype=np.uint8)
 
     metas = []

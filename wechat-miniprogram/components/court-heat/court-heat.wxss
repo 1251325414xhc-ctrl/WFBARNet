@@ -1,0 +1,18 @@
+.court {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.court-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.court-fallback { padding: 20rpx; }
+
+.court-fb-item {
+  padding: 10rpx 0;
+  font-size: 24rpx;
+  color: #5f7068;
+}

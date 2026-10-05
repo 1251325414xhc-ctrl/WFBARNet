@@ -45,8 +45,10 @@ class TrackTrailRendererTest(unittest.TestCase):
 
         self.assertTrue(np.array_equal(canvas[40, 40], np.zeros(3, dtype=np.uint8)))
 
-    def test_trajectory_event_hit_marker_stays_red_for_two_seconds(self) -> None:
+    def test_trajectory_event_hit_marker_is_a_hit_coloured_ring_until_expiry(self) -> None:
         renderer = TrackTrailRenderer(fps=25.0)
+        marker_seconds = renderer.event_marker_seconds
+        radius = renderer.event_marker_radius
         frame = np.zeros((160, 180, 3), dtype=np.uint8)
         hit_event = {
             "event_type": "hit",
@@ -61,13 +63,24 @@ class TrackTrailRendererTest(unittest.TestCase):
             timestamp_ms=40,
             trajectory_event=hit_event,
         )
-        before_expiry = renderer.draw_on(frame.copy(), _missing_result(2), timestamp_ms=2039)
-        after_expiry = renderer.draw_on(frame.copy(), _missing_result(3), timestamp_ms=2040)
 
-        red = np.array(HIT_COLOR, dtype=np.uint8)
-        self.assertTrue(np.array_equal(hit_canvas[80, 70], red))
-        self.assertTrue(np.array_equal(before_expiry[80, 70], red))
-        self.assertFalse(np.array_equal(after_expiry[80, 70], red))
+        def _ring_has_hit_colour(canvas: np.ndarray) -> bool:
+            band = canvas[80, 70 + radius - 4 : 70 + radius + 9]
+            target = np.array(HIT_COLOR, dtype=np.uint8)
+            return any(np.array_equal(colour, target) for colour in band)
+
+        # The hit marker is a hollow ring: HIT_COLOR sits on the ring band and
+        # the centre stays background so the shuttle point itself is visible.
+        self.assertTrue(np.array_equal(hit_canvas[80, 70], np.zeros(3, dtype=np.uint8)))
+        self.assertTrue(_ring_has_hit_colour(hit_canvas))
+
+        # It survives right up to the TTL and is culled once the TTL elapses.
+        last_live_ms = 40 + int(round(marker_seconds * 1000.0)) - 1
+        first_dead_ms = 40 + int(round(marker_seconds * 1000.0))
+        before_expiry = renderer.draw_on(frame.copy(), _missing_result(2), timestamp_ms=last_live_ms)
+        after_expiry = renderer.draw_on(frame.copy(), _missing_result(3), timestamp_ms=first_dead_ms)
+        self.assertTrue(_ring_has_hit_colour(before_expiry))
+        self.assertFalse(np.any(after_expiry))
 
     def test_motion_pattern_does_not_create_hit_marker_without_event(self) -> None:
         renderer = TrackTrailRenderer(fps=25.0)

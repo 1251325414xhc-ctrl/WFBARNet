@@ -1,0 +1,164 @@
+<view class="page page--tab">
+  <view class="wrap">
+
+    <view class="head-card rise">
+      <view class="head-top">
+        <view>
+          <text class="eyebrow">Court Booking</text>
+          <view class="h1">场地预约</view>
+        </view>
+        <button class="btn btn--ghost btn--sm" bindtap="goOrders">我的预约</button>
+      </view>
+      <view class="head-sub">选日期 → 选时段 → 选场地，下单后可到店扫码开台</view>
+      <view class="mine-line" wx:if="{{myUpcoming}}" bindtap="goOrders">
+        <text class="mine-label">即将开始</text>
+        <text class="mine-text">{{myUpcoming.relative}} {{myUpcoming.startLabel}} {{myUpcoming.courtName}}</text>
+        <view class="li-arrow"></view>
+      </view>
+    </view>
+
+    <!-- 日期 -->
+    <view class="date-strip scroll-x">
+      <scroll-view scroll-x class="date-scroll">
+        <view class="date-strip-inner">
+          <view class="date-item {{activeDate === item.key ? 'on' : ''}}"
+            wx:for="{{dates}}" wx:key="key" data-key="{{item.key}}" bindtap="onDateTap">
+            <view class="date-week">{{item.week}}</view>
+            <view class="date-day num">{{item.day}}</view>
+            <view class="date-month">{{item.month}} 月</view>
+          </view>
+        </view>
+      </scroll-view>
+    </view>
+
+    <!-- 时长 -->
+    <view class="card">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Duration</text>
+          <view class="card-title">预约时长</view>
+        </view>
+        <text class="badge badge--info">今日剩余 {{schedule.totalFree}} 个时段</text>
+      </view>
+      <view class="seg">
+        <view class="seg-item {{duration === item.value ? 'on' : ''}}" wx:for="{{durations}}" wx:key="value"
+          data-value="{{item.value}}" bindtap="onDurationTap">{{item.label}}</view>
+      </view>
+    </view>
+
+    <!-- 时间表 -->
+    <view class="card">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Schedule</text>
+          <view class="card-title">时段与场地</view>
+          <view class="card-sub">灰底为已约，点击可约场地即可选中</view>
+        </view>
+      </view>
+
+      <view class="slot-row" wx:for="{{schedule.rows}}" wx:key="startMinutes" wx:for-index="rowIndex">
+        <view class="slot-time">
+          <view class="slot-time-main num">{{item.label}}</view>
+          <view class="slot-time-sub num">{{item.endLabel}}</view>
+          <view class="slot-prime" wx:if="{{item.prime}}">黄金</view>
+        </view>
+        <view class="slot-cells">
+          <view class="slot-cell {{cell.available ? '' : 'off'}} {{selected.courtId === cell.courtId && selected.startMinutes === item.startMinutes ? 'picked' : ''}}"
+            wx:for="{{item.cells}}" wx:for-item="cell" wx:for-index="cellIndex" wx:key="courtId"
+            data-row="{{rowIndex}}" data-cell="{{cellIndex}}" bindtap="onCellTap">
+            <view class="cell-name">{{cell.courtName}}</view>
+            <view class="cell-price num">¥{{cell.price}}</view>
+          </view>
+          <view class="slot-empty" wx:if="{{item.freeCount === 0}}">本时段已满</view>
+        </view>
+      </view>
+
+      <view class="empty" wx:if="{{schedule.rows.length === 0}}">
+        <view class="empty-badge"></view>
+        <view>该日期暂未开放预约</view>
+      </view>
+    </view>
+
+    <!-- 规则 -->
+    <view class="card">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Notice</text>
+          <view class="card-title">预约须知</view>
+        </view>
+      </view>
+      <view class="rule">开赛前 2 小时可免费取消，逾期取消按 50% 计费。</view>
+      <view class="rule">迟到 15 分钟视为自动放弃场地，不作退款。</view>
+      <view class="rule">智能机位会自动录制并生成分析报告，可在「训练记录」查看。</view>
+      <view class="rule">如需教练陪练，请在备注中说明，场馆会提前安排。</view>
+    </view>
+
+    <view style="height:320rpx"></view>
+  </view>
+
+  <!-- 结算条 -->
+  <view class="bottom-bar" wx:if="{{summary}}">
+    <view class="bar-inner">
+      <view class="bar-info">
+        <view class="bar-title">{{summary.courtName}} · {{summary.startLabel}}-{{summary.endLabel}}</view>
+        <view class="bar-sub">{{summary.relative}} {{summary.dateLabel}} {{summary.week}} · {{summary.duration}} 分钟</view>
+        <view class="bar-warn" wx:if="{{summary.conflict}}">时段冲突：{{summary.conflict}}</view>
+      </view>
+      <view class="bar-right">
+        <view class="bar-amount num">{{summary.amount}}</view>
+        <button class="btn btn--primary btn--sm" bindtap="openSheet">立即预约</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 确认弹层 -->
+  <view class="mask" wx:if="{{showSheet}}" bindtap="closeSheet"></view>
+  <view class="sheet" wx:if="{{showSheet}}">
+    <view class="sheet-head">
+      <view class="sheet-title">确认预约</view>
+      <view class="sheet-close" bindtap="closeSheet">✕</view>
+    </view>
+
+    <view class="sheet-body">
+      <view class="srow">
+        <text class="muted small">场地</text>
+        <text class="strong small">{{summary.courtName}}</text>
+      </view>
+      <view class="srow">
+        <text class="muted small">日期</text>
+        <text class="strong small">{{summary.relative}} {{summary.dateLabel}} {{summary.week}}</text>
+      </view>
+      <view class="srow">
+        <text class="muted small">时间</text>
+        <text class="strong small">{{summary.startLabel}} - {{summary.endLabel}}（{{summary.duration}} 分钟）</text>
+      </view>
+      <view class="srow">
+        <text class="muted small">预约人</text>
+        <text class="strong small">林知遥 · 138****6620</text>
+      </view>
+
+      <view class="divider"></view>
+
+      <view class="switch-row">
+        <view class="switch-main">
+          <view class="li-title">开启智能分析</view>
+          <view class="li-sub">使用机位自动录制并生成 WFBARNet 报告</view>
+        </view>
+        <switch checked="{{withAnalysis}}" color="#0e704a" bindchange="toggleAnalysis" />
+      </view>
+
+      <view class="remark-box">
+        <view class="muted small">备注（可选）</view>
+        <input class="remark-input" placeholder="例如：需要吴教练陪练、需要 4 支备用球拍"
+          value="{{remark}}" bindinput="onRemarkInput" />
+      </view>
+
+      <view class="amount-row">
+        <text class="muted small">应付金额</text>
+        <text class="amount-value num">{{summary.amount}}</text>
+      </view>
+
+      <button class="btn btn--primary btn--block" bindtap="confirmBooking">确认预约</button>
+    </view>
+  </view>
+</view>

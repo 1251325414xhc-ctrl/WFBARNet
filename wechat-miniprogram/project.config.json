@@ -1,0 +1,32 @@
+{
+  "appid": "touristappid",
+  "projectname": "wfbar-badminton-miniprogram",
+  "description": "WFBARNet 羽毛球智能分析小程序（顾客端 + 商家端）",
+  "compileType": "miniprogram",
+  "libVersion": "3.5.5",
+  "miniprogramRoot": "./",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": false,
+    "urlCheck": false,
+    "coverView": true,
+    "nodeModules": false,
+    "autoAudits": false,
+    "checkInvalidKey": true,
+    "uglifyFileName": false,
+    "ignoreUploadUnusedFiles": true
+  },
+  "condition": {
+    "miniprogram": {
+      "list": [
+        { "name": "顾客端-首页", "pathName": "pages/home/home", "query": "", "scene": null },
+        { "name": "顾客端-分析报告", "pathName": "pages/report/report", "query": "id=rec-01", "scene": null },
+        { "name": "顾客端-整体表现", "pathName": "pages/performance/performance", "query": "", "scene": null },
+        { "name": "顾客端-场地预约", "pathName": "pages/booking/booking", "query": "", "scene": null },
+        { "name": "商家端-工作台", "pathName": "pages/merchant/workbench/workbench", "query": "", "scene": null }
+      ]
+    }
+  }
+}

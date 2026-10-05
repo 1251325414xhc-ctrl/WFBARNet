@@ -1,0 +1,129 @@
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  display: flex;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: rgba(255, 253, 247, 0.97);
+  border-top: 1rpx solid rgba(16, 35, 29, 0.08);
+  box-shadow: 0 -8rpx 26rpx rgba(7, 61, 49, 0.07);
+}
+
+.tabbar-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 112rpx;
+}
+
+.tabbar-text {
+  margin-top: 6rpx;
+  color: #7c8a83;
+  font-size: 21rpx;
+}
+
+.tabbar-text.on {
+  color: #0e704a;
+  font-weight: 700;
+}
+
+/* ---------- 纯 CSS 图标 ---------- */
+.ico {
+  position: relative;
+  width: 46rpx;
+  height: 46rpx;
+}
+
+.ico .s {
+  position: absolute;
+  border-color: #7c8a83;
+  background: transparent;
+}
+
+.ico.on .s { border-color: #0e704a; }
+.ico.on .s1 { background: #0e704a; }
+
+/* 首页：球场轮廓 + 中线 */
+.ico--home .s1 {
+  left: 3rpx;
+  top: 7rpx;
+  width: 40rpx;
+  height: 32rpx;
+  border: 3rpx solid #7c8a83;
+  border-radius: 8rpx;
+}
+.ico--home.on .s1 { border-color: #0e704a; background: transparent; }
+.ico--home .s2 {
+  left: 21rpx;
+  top: 7rpx;
+  width: 3rpx;
+  height: 32rpx;
+  background: #7c8a83;
+}
+.ico--home.on .s2 { background: #0e704a; }
+.ico--home .s3 { display: none; }
+
+/* 训练：三根柱状 */
+.ico--records .s {
+  bottom: 8rpx;
+  width: 9rpx;
+  border-radius: 3rpx;
+  background: #b7c3bc;
+}
+.ico--records .s1 { left: 3rpx; height: 16rpx; }
+.ico--records .s2 { left: 18rpx; height: 30rpx; }
+.ico--records .s3 { left: 33rpx; height: 23rpx; }
+.ico--records.on .s { background: #0e704a; }
+
+/* 预约：日历 */
+.ico--booking .s1 {
+  left: 4rpx;
+  top: 9rpx;
+  width: 38rpx;
+  height: 30rpx;
+  border: 3rpx solid #7c8a83;
+  border-radius: 8rpx;
+}
+.ico--booking.on .s1 { border-color: #0e704a; background: transparent; }
+.ico--booking .s2 {
+  left: 4rpx;
+  top: 19rpx;
+  width: 38rpx;
+  height: 3rpx;
+  background: #7c8a83;
+}
+.ico--booking.on .s2 { background: #0e704a; }
+.ico--booking .s3 {
+  left: 13rpx;
+  top: 6rpx;
+  width: 3rpx;
+  height: 10rpx;
+  background: #7c8a83;
+}
+.ico--booking.on .s3 { background: #0e704a; }
+
+/* 我的：头 + 肩 */
+.ico--profile .s1 {
+  left: 15rpx;
+  top: 5rpx;
+  width: 16rpx;
+  height: 16rpx;
+  border-radius: 50%;
+  border: 3rpx solid #7c8a83;
+}
+.ico--profile.on .s1 { border-color: #0e704a; background: transparent; }
+.ico--profile .s2 {
+  left: 7rpx;
+  bottom: 6rpx;
+  width: 32rpx;
+  height: 18rpx;
+  border: 3rpx solid #7c8a83;
+  border-bottom: none;
+  border-radius: 18rpx 18rpx 0 0;
+}
+.ico--profile.on .s2 { border-color: #0e704a; }
+.ico--profile .s3 { display: none; }

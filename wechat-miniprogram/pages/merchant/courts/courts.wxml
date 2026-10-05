@@ -1,0 +1,149 @@
+<view class="page">
+  <view class="m-nav">
+    <view class="m-nav-item" bindtap="goWorkbench">工作台</view>
+    <view class="m-nav-item on">场地管理</view>
+    <view class="m-nav-item" bindtap="goManage">预约管理</view>
+  </view>
+
+  <view class="wrap">
+
+    <view class="hero rise">
+      <view class="hero-inner">
+        <text class="eyebrow">Court Settings</text>
+        <view class="hero-title">场地管理</view>
+        <view class="hero-sub">{{venue.name}} · {{venue.branch}}</view>
+        <view class="hero-pills">
+          <view class="hero-pill">共 {{courts.length}} 片场地</view>
+          <view class="hero-pill">开放 {{totalOpen}} 片</view>
+          <view class="hero-pill">{{venue.openTime}} - {{venue.closeTime}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="card rise-1">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Venue Info</text>
+          <view class="card-title">场馆基础信息</view>
+        </view>
+      </view>
+      <view class="kv-row">
+        <text class="muted small">场馆地址</text>
+        <text class="strong small">{{venue.address}}</text>
+      </view>
+      <view class="kv-row">
+        <text class="muted small">联系电话</text>
+        <text class="strong small">{{venue.phone}}</text>
+      </view>
+      <view class="kv-row">
+        <text class="muted small">营业时间</text>
+        <text class="strong small">{{venue.openTime}} - {{venue.closeTime}}</text>
+      </view>
+      <view class="kv-row">
+        <text class="muted small">预约规则</text>
+        <text class="strong small">{{venue.notice}}</text>
+      </view>
+    </view>
+
+    <view class="card rise-1">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Courts</text>
+          <view class="card-title">场地列表</view>
+          <view class="card-sub">开放=可被顾客预约；维护中会同时停止预约</view>
+        </view>
+        <text class="card-more" bindtap="openAdd">新增场地</text>
+      </view>
+
+      <view class="court" wx:for="{{courts}}" wx:key="id">
+        <view class="court-head">
+          <view class="court-badge {{item.open && !item.maintenance ? '' : 'court-badge--off'}}">{{item.name}}</view>
+          <view class="court-main">
+            <view class="li-title">{{item.type}} · {{item.surface}}</view>
+            <view class="li-sub">
+              标准价 ¥{{item.price}}/小时{{item.camera ? ' · 含智能机位' : ' · 无机位'}}
+            </view>
+          </view>
+          <text class="badge {{item.statusClass === 'ok' ? 'badge--ok' : item.statusClass === 'danger' ? 'badge--danger' : ''}}">{{item.statusText}}</text>
+        </view>
+
+        <view class="court-ops">
+          <view class="op">
+            <view class="op-label">开放预约</view>
+            <switch checked="{{item.open}}" color="#0e704a" data-id="{{item.id}}" bindchange="toggleOpen" />
+          </view>
+          <view class="op">
+            <view class="op-label">维护中</view>
+            <switch checked="{{item.maintenance}}" color="#d4633f" data-id="{{item.id}}" bindchange="toggleMaintenance" />
+          </view>
+          <view class="op">
+            <view class="op-label">价格</view>
+            <view class="price-btn" data-id="{{item.id}}" bindtap="editPrice">¥{{item.price}} · 修改</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="card rise-2">
+      <view class="card-hd">
+        <view>
+          <text class="eyebrow">Pricing Rule</text>
+          <view class="card-title">计费与退订规则</view>
+        </view>
+      </view>
+      <view class="rule">订单金额 = 标准价 × 时长（分钟）/ 60，向下取整到元。</view>
+      <view class="rule">黄金时段（18:00 后）可按需加价，本版本暂用标准价。</view>
+      <view class="rule">开赛前 2 小时免费取消，逾期取消按 50% 计费。</view>
+      <view class="rule">智能机位分析产生的报告归属顾客账号，商家可在任务队列中查看状态。</view>
+    </view>
+
+  </view>
+
+  <!-- 改价弹层 -->
+  <view class="mask" wx:if="{{showPrice}}" bindtap="closeSheet"></view>
+  <view class="sheet" wx:if="{{showPrice}}">
+    <view class="sheet-head">
+      <view class="sheet-title">修改 {{editing.name}} 价格</view>
+      <view class="sheet-close" bindtap="closeSheet">✕</view>
+    </view>
+    <view class="sheet-form">
+      <view class="muted small">标准价（元 / 小时）</view>
+      <input class="input" type="digit" value="{{priceInput}}" bindinput="onPriceInput" placeholder="例如 60" />
+      <view class="tag-row">
+        <text class="chip" wx:for="{{[40, 48, 55, 60, 68]}}" wx:key="*this">{{item}}</text>
+      </view>
+      <button class="btn btn--primary btn--block" style="margin-top:24rpx" bindtap="savePrice">保存</button>
+    </view>
+  </view>
+
+  <!-- 新增场地弹层 -->
+  <view class="mask" wx:if="{{showAdd}}" bindtap="closeSheet"></view>
+  <view class="sheet" wx:if="{{showAdd}}">
+    <view class="sheet-head">
+      <view class="sheet-title">新增场地</view>
+      <view class="sheet-close" bindtap="closeSheet">✕</view>
+    </view>
+    <view class="sheet-form">
+      <view class="muted small">场地名称</view>
+      <input class="input" value="{{newCourt.name}}" bindinput="onNewName" placeholder="例如 7 号场" />
+
+      <view class="muted small" style="margin-top:20rpx">场地类型</view>
+      <picker mode="selector" range="{{typeNames}}" value="{{newCourt.typeIndex}}" bindchange="onNewType">
+        <view class="input picker-view">{{typeNames[newCourt.typeIndex]}}</view>
+      </picker>
+
+      <view class="muted small" style="margin-top:20rpx">标准价（元 / 小时）</view>
+      <input class="input" type="digit" value="{{newCourt.price}}" bindinput="onNewPrice" placeholder="例如 55" />
+
+      <view class="switch-row">
+        <view class="switch-main">
+          <view class="li-title">含智能机位</view>
+          <view class="li-sub">可自动录制并生成 WFBARNet 报告</view>
+        </view>
+        <switch checked="{{newCourt.camera}}" color="#0e704a" bindchange="onNewCamera" />
+      </view>
+
+      <button class="btn btn--primary btn--block" bindtap="saveAdd">创建场地</button>
+    </view>
+  </view>
+</view>

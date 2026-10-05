@@ -1,0 +1,17 @@
+.hero-stats {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  margin-top: 24rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid rgba(248, 255, 242, 0.22);
+}
+
+.hero-stat { flex: 1; text-align: center; }
+.hero-stat-value { font-size: 40rpx; font-weight: 800; }
+.hero-stat-label { margin-top: 2rpx; font-size: 21rpx; color: rgba(248, 255, 242, 0.76); }
+
+.dim-list { margin-top: 26rpx; padding-top: 22rpx; border-top: 1rpx solid rgba(16, 35, 29, 0.08); }
+
+.chips-scroll { white-space: nowrap; }
+.chips .chip { display: inline-block; }
